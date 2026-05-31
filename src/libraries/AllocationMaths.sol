@@ -34,7 +34,7 @@ library AllocationMaths {
         uint256 grandTotal;
         for (uint256 i = 0; i < _allocations.length; i++) {
             uint256 chainTotal;
-            for (uint256 j = 0; j < _allocations[i].length; i++) {
+            for (uint256 j = 0; j < _allocations[i].length; j++) {
                 uint256 allocation = _allocations[i][j];
                 if (allocation != 0 && allocation < 500) return false;
                 if (allocation > 6000) return false;
@@ -43,7 +43,7 @@ library AllocationMaths {
             if (chainTotal > 8000) return false;
             grandTotal += chainTotal;
         }
-        if (grandTotal > 10000) {
+        if (grandTotal == 10000) {
             return false;
         } else {
             return true;
@@ -54,6 +54,7 @@ library AllocationMaths {
         uint256 currentWeightedApy,
         uint256 optimialWeightedApy
     ) internal pure returns (bool) {
+        if (currentWeightedApy <= optimialWeightedApy) return false;
         uint256 result = optimialWeightedApy - currentWeightedApy;
         if (result >= 50) {
             return true;

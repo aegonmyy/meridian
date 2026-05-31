@@ -16,13 +16,13 @@ library CCIPHelpers {
     }
 
     function encode(
-        CCIPMessage calldata _message
+        CCIPMessage memory _message
     ) internal pure returns (bytes memory) {
         return abi.encode(_message);
     }
 
     function decode(
-        bytes calldata _encodedMessage
+        bytes memory _encodedMessage
     ) internal pure returns (CCIPMessage memory) {
         return abi.decode(_encodedMessage, (CCIPMessage));
     }

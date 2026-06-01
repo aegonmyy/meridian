@@ -15,6 +15,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     mapping(bytes32 => adapterInfo) public adapters;
     bytes32[] public activeAdapters;
     error ZeroAddress();
+    error AdapterNotFound();
     error NotHub();
     struct adapterInfo {
         IYieldSource adapter;
@@ -48,6 +49,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     }
 
     function removeAdapter(bytes32 _protocolId) external onlyOwner {
+        if (adapters[_protocolId].exists == false) revert AdapterNotFound();
         adapters[_protocolId].adapter = IYieldSource(address(0));
         adapters[_protocolId].exists = false;
     }

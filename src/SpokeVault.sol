@@ -23,8 +23,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
     // =========================================================================
 
     /// @notice Stores adapter contract and registration status for a protocol
-    /// @dev exists flag is used to differentiate unregistered vs removed adapters
-    ///      and to skip inactive entries when iterating activeAdapters
+    /// @dev exists flag differentiates unregistered vs removed adapters
+    ///      and gates iteration in _reportBalance
     struct AdapterInfo {
         IYieldSource adapter;
         bool exists;
@@ -75,17 +75,14 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @notice Thrown when a CCIP message originates from an address other than the hub
     error NotHub();
 
-    ///@notice Thrown when unexpected message is gotten
-    error unknownMessage();
-
-    /// @notice Thrown when attempting to remove an adapter that is not registered
+    /// @notice Thrown when attempting to interact with an adapter that is not registered or has been removed
     error AdapterNotFound();
 
     /// @notice Thrown when a CCIP message contains an unrecognised message type
     error InvalidMessageType();
 
-    ///@notice Thrown when amount is zero
-    error amountCannotBeZero();
+    /// @notice Thrown when a deposit or withdrawal amount of zero is received
+    error AmountCannotBeZero();
 
     // =========================================================================
     // Constructor
@@ -140,8 +137,9 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @notice Disables an adapter by flipping its exists flag to false
     /// @dev Does not remove the protocolId from activeAdapters array.
     ///      Inactive entries are skipped during iteration using the exists flag.
-    ///      This is an emergency mechanism — use to disable a compromised protocol.
-    /// @param _protocolId The bytes32 identifier of the protocol to remove
+    ///      Emergency mechanism — use to instantly disable a compromised protocol.
+    ///      No timelock in v1. Production deployments should use a multisig owner.
+    /// @param _protocolId The bytes32 identifier of the protocol to disable
     function removeAdapter(bytes32 _protocolId) external onlyOwner {
         if (!adapters[_protocolId].exists) revert AdapterNotFound();
         adapters[_protocolId].adapter = IYieldSource(address(0));
@@ -153,11 +151,11 @@ contract SpokeVault is CCIPReceiver, Ownable {
     // Internal Functions
     // =========================================================================
 
-    /// @notice Handles incoming CCIP messages from the HubVault
-    /// @dev Overrides CCIPReceiver._ccipReceive. Router check is handled by base contract.
-    ///      Hub check is enforced here by decoding message.sender.
-    ///      Routes to deposit, withdraw, or report balance based on message type.
-    /// @param message The incoming CCIP message struct
+    /// @notice Entry point for all incoming CCIP messages from the HubVault
+    /// @dev Overrides CCIPReceiver._ccipReceive. Router check handled by base contract.
+    ///      Hub origin check enforced here by decoding message.sender.
+    ///      Decodes the custom payload via CCIPHelpers and routes to the correct handler.
+    /// @param message The incoming CCIP message struct delivered by the router
     function _ccipReceive(
         Client.Any2EVMMessage memory message
     ) internal override {
@@ -175,21 +173,66 @@ contract SpokeVault is CCIPReceiver, Ownable {
         ) {
             _reportBalance(_message);
         } else {
-            revert unknownMessage();
+            revert InvalidMessageType();
         }
     }
 
+    /// @notice Deposits received USDC into the specified yield adapter
+    /// @dev Validates adapter is active and amount is non-zero before depositing.
+    ///      Uses forceApprove to handle tokens like USDT that revert on non-zero allowance.
+    ///      Allocation validation (bps constraints) is upstream in the Rebalancer —
+    ///      by the time this message arrives the allocation has already been validated on-chain.
+    /// @param _message The decoded CCIP message containing adapter id and amount
     function _handleDeposit(CCIPHelpers.CCIPMessage memory _message) internal {
         AdapterInfo memory _adapter = adapters[_message.adapter];
-        if (_adapter.exists == false) revert AdapterNotFound();
-        if (_message.amount == 0) revert amountCannotBeZero();
-        asset.approve((address(_adapter.adapter)), _message.amount);
-        (_adapter.adapter).deposit(_message.amount);
+        if (!_adapter.exists) revert AdapterNotFound();
+        if (_message.amount == 0) revert AmountCannotBeZero();
+        asset.forceApprove(address(_adapter.adapter), _message.amount);
+        _adapter.adapter.deposit(_message.amount);
     }
 
+    /// @notice Withdraws USDC from the specified adapter and sends it back to the hub via CCIP
+    /// @dev To be implemented
+    /// @param _message The decoded CCIP message containing adapter id and amount
     function _handleWithdrawal(
         CCIPHelpers.CCIPMessage memory _message
-    ) internal {}
+    ) internal {
+        AdapterInfo memory _adapter = adapters[_message.adapter];
+        if (!_adapter.exists) revert AdapterNotFound();
+        if (_message.amount == 0) revert AmountCannotBeZero();
+        _adapter.adapter.withdraw(_message.amount);
+        Client.EVMTokenAmount[]
+            memory tokenAmount = new Client.EVMTokenAmount[](1);
+        tokenAmount[0] = Client.EVMTokenAmount({
+            token: address(asset),
+            amount: _message.amount
+        });
+        Client.EVM2AnyMessage[]
+            memory ccipMessage = new Client.EVM2AnyMessage[](1);
+        ccipMessage[0] = Client.EVM2AnyMessage({
+            receiver: abi.encode(HUB),
+            data: CCIPHelpers.encode(
+                CCIPHelpers.CCIPMessage({
+                    messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
+                    adapter: bytes32(0),
+                    amount: _message.amount
+                })
+            ),
+            tokenAmounts: tokenAmount,
+            feeToken: address(0),
+            extraArgs: Client._argsToBytes(
+                Client.EVMExtraArgsV2({
+                    gasLimit: 200_000,
+                    allowOutOfOrderExecution: false
+                })
+            )
+        });
+    }
 
+    /// @notice Sums balances across all active adapters and reports total to the hub via CCIP
+    /// @dev Iterates activeAdapters array, skipping entries where exists == false.
+    ///      Reports real balance including accrued yield via adapter.totalAssets().
+    ///      To be implemented.
+    /// @param _message The decoded CCIP message (amount and adapter fields unused for balance report)
     function _reportBalance(CCIPHelpers.CCIPMessage memory _message) internal {}
 }

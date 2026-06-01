@@ -180,14 +180,11 @@ contract SpokeVault is CCIPReceiver, Ownable {
     }
 
     function _handleDeposit(CCIPHelpers.CCIPMessage memory _message) internal {
-        if (adapters[_message.adapter].exists == false)
-            revert AdapterNotFound();
+        AdapterInfo memory _adapter = adapters[_message.adapter];
+        if (_adapter.exists == false) revert AdapterNotFound();
         if (_message.amount == 0) revert amountCannotBeZero();
-        asset.approve(
-            (address(adapters[_message.adapter].adapter)),
-            _message.amount
-        );
-        (adapters[_message.adapter].adapter).deposit(_message.amount);
+        asset.approve((address(_adapter.adapter)), _message.amount);
+        (_adapter.adapter).deposit(_message.amount);
     }
 
     function _handleWithdrawal(

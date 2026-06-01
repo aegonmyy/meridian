@@ -11,7 +11,7 @@ library CCIPHelpers {
 
     struct CCIPMessage {
         MessageType messageType;
-        address adapter;
+        bytes32 adapter;
         uint256 amount;
     }
 

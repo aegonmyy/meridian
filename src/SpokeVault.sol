@@ -40,7 +40,15 @@ contract SpokeVault is CCIPReceiver, Ownable {
 
     /// @notice The asset managed by this vault (USDC in v1)
     /// @dev Immutable — single asset per spoke in v1. Multi-asset support deferred to v2.
-    IERC20 public immutable asset;
+    IERC20 public immutable ASSET;
+
+    /// @notice CCIP chain selector for the hub chain (Ethereum mainnet)
+    /// @dev Used as destination selector when sending messages back to the hub
+    uint64 public immutable HUB_CHAIN_SELECTOR;
+
+    /// @notice LINK token used to pay CCIP fees
+    /// @dev Spoke must hold sufficient LINK balance for outbound messages
+    IERC20 public immutable LINK;
 
     /// @notice Maps protocol identifiers to their adapter info
     /// @dev Key is an arbitrary bytes32 agreed upon at deployment e.g. keccak256("AAVE").
@@ -69,6 +77,9 @@ contract SpokeVault is CCIPReceiver, Ownable {
     // Errors
     // =========================================================================
 
+    ///@notice Thrown when no active adapter is found
+    error NoActiveAdapters();
+
     /// @notice Thrown when a zero address is provided where not allowed
     error ZeroAddress();
 
@@ -84,6 +95,9 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @notice Thrown when a deposit or withdrawal amount of zero is received
     error AmountCannotBeZero();
 
+    ///@notice Thrown when any of the constructor argument is invalid
+    error invalidConstructorArguments();
+
     // =========================================================================
     // Constructor
     // =========================================================================
@@ -96,16 +110,27 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @param _asset Address of the ERC20 asset (USDC)
     /// @param _router Address of the Chainlink CCIP router on this chain
     /// @param _owner Address of the contract owner (should be a multisig before mainnet)
+    /// @param _link Address of the LINK token on this chain
+    /// @param _hubSelector Chainlink CCIP chain selector for Ethereum mainnet
     constructor(
         address _hub,
         address _asset,
         address _router,
-        address _owner
+        address _owner,
+        address _link,
+        uint64 _hubSelector
     ) CCIPReceiver(_router) Ownable(_owner) {
-        if (_hub == address(0) || _asset == address(0) || _router == address(0))
-            revert ZeroAddress();
+        if (
+            _hub == address(0) ||
+            _asset == address(0) ||
+            _router == address(0) ||
+            _link == address(0) ||
+            _hubSelector == 0
+        ) revert invalidConstructorArguments();
         HUB = _hub;
-        asset = IERC20(_asset);
+        ASSET = IERC20(_asset);
+        HUB_CHAIN_SELECTOR = _hubSelector;
+        LINK = IERC20(_link);
     }
 
     // =========================================================================
@@ -171,7 +196,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
         } else if (
             _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
         ) {
-            _reportBalance(_message);
+            _reportBalance();
         } else {
             revert InvalidMessageType();
         }
@@ -187,12 +212,14 @@ contract SpokeVault is CCIPReceiver, Ownable {
         AdapterInfo memory _adapter = adapters[_message.adapter];
         if (!_adapter.exists) revert AdapterNotFound();
         if (_message.amount == 0) revert AmountCannotBeZero();
-        asset.forceApprove(address(_adapter.adapter), _message.amount);
+        ASSET.forceApprove(address(_adapter.adapter), _message.amount);
         _adapter.adapter.deposit(_message.amount);
     }
 
-    /// @notice Withdraws USDC from the specified adapter and sends it back to the hub via CCIP
-    /// @dev To be implemented
+    /// @notice Withdraws USDC from the specified adapter and sends funds back to the hub via CCIP
+    /// @dev Withdraws from adapter, builds a PTT (Programmable Token Transfer) back to hub.
+    ///      Sends CONFIRM_RECEIPT message alongside the USDC so hub can decrement inTransitAssets.
+    ///      LINK balance must be sufficient to cover the CCIP fee.
     /// @param _message The decoded CCIP message containing adapter id and amount
     function _handleWithdrawal(
         CCIPHelpers.CCIPMessage memory _message
@@ -204,12 +231,10 @@ contract SpokeVault is CCIPReceiver, Ownable {
         Client.EVMTokenAmount[]
             memory tokenAmount = new Client.EVMTokenAmount[](1);
         tokenAmount[0] = Client.EVMTokenAmount({
-            token: address(asset),
+            token: address(ASSET),
             amount: _message.amount
         });
-        Client.EVM2AnyMessage[]
-            memory ccipMessage = new Client.EVM2AnyMessage[](1);
-        ccipMessage[0] = Client.EVM2AnyMessage({
+        Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
                 CCIPHelpers.CCIPMessage({
@@ -219,7 +244,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
                 })
             ),
             tokenAmounts: tokenAmount,
-            feeToken: address(0),
+            feeToken: address(LINK),
             extraArgs: Client._argsToBytes(
                 Client.EVMExtraArgsV2({
                     gasLimit: 200_000,
@@ -227,12 +252,49 @@ contract SpokeVault is CCIPReceiver, Ownable {
                 })
             )
         });
+        IRouterClient router = IRouterClient(getRouter());
+        uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
+        ASSET.forceApprove(address(router), _message.amount);
+        LINK.forceApprove(address(router), fee);
+        router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
     }
 
     /// @notice Sums balances across all active adapters and reports total to the hub via CCIP
-    /// @dev Iterates activeAdapters array, skipping entries where exists == false.
-    ///      Reports real balance including accrued yield via adapter.totalAssets().
-    ///      To be implemented.
-    /// @param _message The decoded CCIP message (amount and adapter fields unused for balance report)
-    function _reportBalance(CCIPHelpers.CCIPMessage memory _message) internal {}
+    /// @dev Iterates activeAdapters array, skipping entries, sums totalAssets() from each adapter.
+    ///      Sends results back to hub as a REPORT_BALANCE message.
+    ///      LINK balance must be sufficient to cover the ccip fee.
+    function _reportBalance() internal {
+        bytes32[] memory _activeAdapters = activeAdapters;
+        uint256 _length = _activeAdapters.length;
+        if (_length == 0) revert NoActiveAdapters();
+        uint256 totalAssets;
+        for (uint256 i = 0; i < _length; i++) {
+            if (adapters[_activeAdapters[i]].exists == false) continue;
+            totalAssets += adapters[_activeAdapters[i]].adapter.totalAssets();
+        }
+        Client.EVMTokenAmount[]
+            memory tokenAmount = new Client.EVMTokenAmount[](0);
+        Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
+            receiver: abi.encode(HUB),
+            data: CCIPHelpers.encode(
+                CCIPHelpers.CCIPMessage({
+                    messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
+                    adapter: bytes32(0),
+                    amount: totalAssets
+                })
+            ),
+            tokenAmounts: tokenAmount,
+            feeToken: address(LINK),
+            extraArgs: Client._argsToBytes(
+                Client.EVMExtraArgsV2({
+                    gasLimit: 200_000,
+                    allowOutOfOrderExecution: false
+                })
+            )
+        });
+        IRouterClient router = IRouterClient(getRouter());
+        uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
+        LINK.forceApprove(address(router), fee);
+        router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
+    }
 }

@@ -209,38 +209,36 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      by the time this message arrives the allocation has already been validated on-chain.
     /// @param _message The decoded CCIP message containing adapter id and amount
     function _handleDeposit(CCIPHelpers.CCIPMessage memory _message) internal {
-        AdapterInfo memory _adapter = adapters[_message.adapter];
-        if (!_adapter.exists) revert AdapterNotFound();
-        if (_message.amount == 0) revert AmountCannotBeZero();
-        ASSET.forceApprove(address(_adapter.adapter), _message.amount);
-        _adapter.adapter.deposit(_message.amount);
-    }
-
-    /// @notice Withdraws USDC from the specified adapter and sends funds back to the hub via CCIP
-    /// @dev Withdraws from adapter, builds a PTT (Programmable Token Transfer) back to hub.
-    ///      Sends CONFIRM_RECEIPT message alongside the USDC so hub can decrement inTransitAssets.
-    ///      LINK balance must be sufficient to cover the CCIP fee.
-    /// @param _message The decoded CCIP message containing adapter id and amount
-    function _handleWithdrawal(
-        CCIPHelpers.CCIPMessage memory _message
-    ) internal {
-        AdapterInfo memory _adapter = adapters[_message.adapter];
-        if (!_adapter.exists) revert AdapterNotFound();
-        if (_message.amount == 0) revert AmountCannotBeZero();
-        _adapter.adapter.withdraw(_message.amount);
+        uint256 _tokenAmount;
+        if (_message.instructions.length == 0) revert InvalidMessageType();
+        for (uint256 i = 0; i < _message.instructions.length; i++) {
+            if (_message.instructions[i].amount == 0)
+                revert AmountCannotBeZero();
+            AdapterInfo memory _adapter = adapters[
+                _message.instructions[i].adapter
+            ];
+            if (!_adapter.exists) revert AdapterNotFound();
+            ASSET.forceApprove(
+                address(_adapter.adapter),
+                _message.instructions[i].amount
+            );
+            _adapter.adapter.deposit(_message.instructions[i].amount);
+        }
         Client.EVMTokenAmount[]
             memory tokenAmount = new Client.EVMTokenAmount[](1);
-        tokenAmount[0] = Client.EVMTokenAmount({
-            token: address(ASSET),
-            amount: _message.amount
+
+        CCIPHelpers.adapterInstructions[]
+            memory _instructions = new CCIPHelpers.adapterInstructions[](1);
+        _instructions[0] = CCIPHelpers.adapterInstructions({
+            adapter: bytes32(0),
+            amount: _tokenAmount
         });
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
                 CCIPHelpers.CCIPMessage({
                     messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
-                    adapter: bytes32(0),
-                    amount: _message.amount
+                    instructions: _instructions
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -254,7 +252,62 @@ contract SpokeVault is CCIPReceiver, Ownable {
         });
         IRouterClient router = IRouterClient(getRouter());
         uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
-        ASSET.forceApprove(address(router), _message.amount);
+        LINK.forceApprove(address(router), fee);
+        router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
+    }
+
+    /// @notice Withdraws USDC from the specified adapter and sends funds back to the hub via CCIP
+    /// @dev Withdraws from adapter, builds a PTT (Programmable Token Transfer) back to hub.
+    ///      Sends CONFIRM_RECEIPT message alongside the USDC so hub can decrement inTransitAssets.
+    ///      LINK balance must be sufficient to cover the CCIP fee.
+    /// @param _message The decoded CCIP message containing adapter id and amount
+    function _handleWithdrawal(
+        CCIPHelpers.CCIPMessage memory _message
+    ) internal {
+        if (_message.instructions.length == 0) revert InvalidMessageType();
+        uint256 _tokenAmount;
+        for (uint256 i = 0; i < _message.instructions.length; i++) {
+            if (_message.instructions[i].amount == 0)
+                revert AmountCannotBeZero();
+            AdapterInfo memory _adapter = adapters[
+                _message.instructions[i].adapter
+            ];
+            if (!_adapter.exists) revert AdapterNotFound();
+            _tokenAmount += _message.instructions[i].amount;
+            _adapter.adapter.withdraw(_message.instructions[i].amount);
+        }
+        Client.EVMTokenAmount[]
+            memory tokenAmount = new Client.EVMTokenAmount[](1);
+        tokenAmount[0] = Client.EVMTokenAmount({
+            token: address(ASSET),
+            amount: _tokenAmount
+        });
+        CCIPHelpers.adapterInstructions[]
+            memory _instructions = new CCIPHelpers.adapterInstructions[](1);
+        _instructions[0] = CCIPHelpers.adapterInstructions({
+            adapter: bytes32(0),
+            amount: _tokenAmount
+        });
+        Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
+            receiver: abi.encode(HUB),
+            data: CCIPHelpers.encode(
+                CCIPHelpers.CCIPMessage({
+                    messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
+                    instructions: _instructions
+                })
+            ),
+            tokenAmounts: tokenAmount,
+            feeToken: address(LINK),
+            extraArgs: Client._argsToBytes(
+                Client.EVMExtraArgsV2({
+                    gasLimit: 200_000,
+                    allowOutOfOrderExecution: false
+                })
+            )
+        });
+        IRouterClient router = IRouterClient(getRouter());
+        uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
+        ASSET.forceApprove(address(router), _tokenAmount);
         LINK.forceApprove(address(router), fee);
         router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
     }
@@ -274,13 +327,18 @@ contract SpokeVault is CCIPReceiver, Ownable {
         }
         Client.EVMTokenAmount[]
             memory tokenAmount = new Client.EVMTokenAmount[](0);
+        CCIPHelpers.adapterInstructions[]
+            memory _instructions = new CCIPHelpers.adapterInstructions[](1);
+        _instructions[0] = CCIPHelpers.adapterInstructions({
+            adapter: bytes32(0),
+            amount: totalAssets
+        });
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
                 CCIPHelpers.CCIPMessage({
                     messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
-                    adapter: bytes32(0),
-                    amount: totalAssets
+                    instructions: _instructions
                 })
             ),
             tokenAmounts: tokenAmount,

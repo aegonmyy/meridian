@@ -9,10 +9,14 @@ library CCIPHelpers {
         CONFIRM_RECEIPT
     }
 
-    struct CCIPMessage {
-        MessageType messageType;
+    struct adapterInstructions {
         bytes32 adapter;
         uint256 amount;
+    }
+
+    struct CCIPMessage {
+        MessageType messageType;
+        adapterInstructions[] instructions;
     }
 
     function encode(

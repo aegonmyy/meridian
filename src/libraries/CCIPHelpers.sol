@@ -9,25 +9,25 @@ library CCIPHelpers {
         CONFIRM_RECEIPT
     }
 
-    struct adapterInstructions {
+    struct AdapterInstructions {
         bytes32 adapter;
         uint256 amount;
     }
 
-    struct CCIPMessage {
+    struct CcipMessage {
         MessageType messageType;
-        adapterInstructions[] instructions;
+        AdapterInstructions[] instructions;
     }
 
     function encode(
-        CCIPMessage memory _message
+        CcipMessage memory _message
     ) internal pure returns (bytes memory) {
         return abi.encode(_message);
     }
 
     function decode(
         bytes memory _encodedMessage
-    ) internal pure returns (CCIPMessage memory) {
-        return abi.decode(_encodedMessage, (CCIPMessage));
+    ) internal pure returns (CcipMessage memory) {
+        return abi.decode(_encodedMessage, (CcipMessage));
     }
 }

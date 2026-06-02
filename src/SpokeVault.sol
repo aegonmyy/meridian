@@ -185,7 +185,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
         Client.Any2EVMMessage memory message
     ) internal override {
         if (abi.decode(message.sender, (address)) != HUB) revert NotHub();
-        CCIPHelpers.CCIPMessage memory _message = CCIPHelpers.decode(
+        CCIPHelpers.CcipMessage memory _message = CCIPHelpers.decode(
             message.data
         );
 
@@ -208,7 +208,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      Allocation validation (bps constraints) is upstream in the Rebalancer —
     ///      by the time this message arrives the allocation has already been validated on-chain.
     /// @param _message The decoded CCIP message containing adapter id and amount
-    function _handleDeposit(CCIPHelpers.CCIPMessage memory _message) internal {
+    function _handleDeposit(CCIPHelpers.CcipMessage memory _message) internal {
         uint256 _tokenAmount;
         if (_message.instructions.length == 0) revert InvalidMessageType();
         for (uint256 i = 0; i < _message.instructions.length; i++) {
@@ -227,16 +227,16 @@ contract SpokeVault is CCIPReceiver, Ownable {
         Client.EVMTokenAmount[]
             memory tokenAmount = new Client.EVMTokenAmount[](1);
 
-        CCIPHelpers.adapterInstructions[]
-            memory _instructions = new CCIPHelpers.adapterInstructions[](1);
-        _instructions[0] = CCIPHelpers.adapterInstructions({
+        CCIPHelpers.AdapterInstructions[]
+            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+        _instructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: bytes32(0),
             amount: _tokenAmount
         });
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
-                CCIPHelpers.CCIPMessage({
+                CCIPHelpers.CcipMessage({
                     messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
                     instructions: _instructions
                 })
@@ -262,7 +262,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      LINK balance must be sufficient to cover the CCIP fee.
     /// @param _message The decoded CCIP message containing adapter id and amount
     function _handleWithdrawal(
-        CCIPHelpers.CCIPMessage memory _message
+        CCIPHelpers.CcipMessage memory _message
     ) internal {
         if (_message.instructions.length == 0) revert InvalidMessageType();
         uint256 _tokenAmount;
@@ -282,16 +282,16 @@ contract SpokeVault is CCIPReceiver, Ownable {
             token: address(ASSET),
             amount: _tokenAmount
         });
-        CCIPHelpers.adapterInstructions[]
-            memory _instructions = new CCIPHelpers.adapterInstructions[](1);
-        _instructions[0] = CCIPHelpers.adapterInstructions({
+        CCIPHelpers.AdapterInstructions[]
+            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+        _instructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: bytes32(0),
             amount: _tokenAmount
         });
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
-                CCIPHelpers.CCIPMessage({
+                CCIPHelpers.CcipMessage({
                     messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
                     instructions: _instructions
                 })
@@ -327,16 +327,16 @@ contract SpokeVault is CCIPReceiver, Ownable {
         }
         Client.EVMTokenAmount[]
             memory tokenAmount = new Client.EVMTokenAmount[](0);
-        CCIPHelpers.adapterInstructions[]
-            memory _instructions = new CCIPHelpers.adapterInstructions[](1);
-        _instructions[0] = CCIPHelpers.adapterInstructions({
+        CCIPHelpers.AdapterInstructions[]
+            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+        _instructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: bytes32(0),
             amount: totalAssets
         });
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
-                CCIPHelpers.CCIPMessage({
+                CCIPHelpers.CcipMessage({
                     messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
                     instructions: _instructions
                 })

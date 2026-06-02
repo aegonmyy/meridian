@@ -11,9 +11,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 contract AaveAdapter is IYieldSource {
     using SafeERC20 for IERC20;
 
-    IPool public immutable aave;
-    IAtoken public immutable aToken;
-    IERC20 public immutable asset;
+    IPool public immutable AAVE;
+    IAtoken public immutable A_TOKEN;
+    IERC20 public immutable ASSET;
 
     /// @notice Raised when a required constructor address is zero.
     error ZeroAddress();
@@ -27,30 +27,30 @@ contract AaveAdapter is IYieldSource {
         ) {
             revert ZeroAddress();
         }
-        aave = IPool(_aave);
-        aToken = IAtoken(_aToken);
-        asset = IERC20(_asset);
-        asset.forceApprove(_aave, type(uint256).max);
+        AAVE = IPool(_aave);
+        A_TOKEN = IAtoken(_aToken);
+        ASSET = IERC20(_asset);
+        ASSET.forceApprove(_aave, type(uint256).max);
     }
 
     /// @inheritdoc IYieldSource
     function deposit(uint256 _amount) external {
-        asset.safeTransferFrom(msg.sender, address(this), _amount);
-        aave.supply(address(asset), _amount, address(this), 0);
+        ASSET.safeTransferFrom(msg.sender, address(this), _amount);
+        AAVE.supply(address(ASSET), _amount, address(this), 0);
     }
 
     /// @inheritdoc IYieldSource
     function withdraw(uint256 _amount) external {
-        uint256 withdrawn = aave.withdraw(
-            address(asset),
+        uint256 withdrawn = AAVE.withdraw(
+            address(ASSET),
             _amount,
             address(this)
         );
-        asset.safeTransfer(msg.sender, withdrawn);
+        ASSET.safeTransfer(msg.sender, withdrawn);
     }
 
     /// @inheritdoc IYieldSource
     function totalAssets() external view returns (uint256) {
-        return aToken.balanceOf(address(this));
+        return A_TOKEN.balanceOf(address(this));
     }
 }

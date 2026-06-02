@@ -11,8 +11,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 contract compoundAdapter is IYieldSource {
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable asset;
-    IComet public immutable compound;
+    IERC20 public immutable ASSET;
+    IComet public immutable COMPOUND;
 
     /// @notice Raised when a required constructor address is zero.
     error ZeroAddress();
@@ -23,25 +23,25 @@ contract compoundAdapter is IYieldSource {
         if (_asset == address(0) || _compound == address(0)) {
             revert ZeroAddress();
         }
-        asset = IERC20(_asset);
-        compound = IComet(_compound);
-        asset.forceApprove(_compound, type(uint256).max);
+        ASSET = IERC20(_asset);
+        COMPOUND = IComet(_compound);
+        ASSET.forceApprove(_compound, type(uint256).max);
     }
 
     /// @inheritdoc IYieldSource
     function deposit(uint256 _amount) external {
-        asset.safeTransferFrom(msg.sender, address(this), _amount);
-        compound.supply(address(asset), _amount);
+        ASSET.safeTransferFrom(msg.sender, address(this), _amount);
+        COMPOUND.supply(address(ASSET), _amount);
     }
 
     /// @inheritdoc IYieldSource
     function withdraw(uint256 _amount) external {
-        compound.withdraw(address(asset), _amount);
-        asset.safeTransfer(msg.sender, _amount);
+        COMPOUND.withdraw(address(ASSET), _amount);
+        ASSET.safeTransfer(msg.sender, _amount);
     }
 
     /// @inheritdoc IYieldSource
     function totalAssets() external view returns (uint256) {
-        return compound.balanceOf(address(this));
+        return COMPOUND.balanceOf(address(this));
     }
 }

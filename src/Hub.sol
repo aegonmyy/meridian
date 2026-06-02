@@ -10,7 +10,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 
-contract HUB is ERC4626, CCIPReceiver, Ownable {
+abstract contract HUB is ERC4626, CCIPReceiver, Ownable {
     using SafeERC20 for IERC20;
 
     address public immutable LINK;

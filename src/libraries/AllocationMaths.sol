@@ -5,27 +5,27 @@ pragma solidity ^0.8.33;
 error arrayOutOfBound();
 
 library AllocationMaths {
-    function netAPY(
-        uint256 _grossAPY,
+    function netApy(
+        uint256 _grossApy,
         uint256 _costs
-    ) internal pure returns (uint256 _netAPY) {
-        _netAPY = _grossAPY - _costs;
-        return _netAPY;
+    ) internal pure returns (uint256 _netApy) {
+        _netApy = _grossApy - _costs;
+        return _netApy;
     }
 
-    function weightedAPY(
+    function weightedApy(
         uint256[] memory _allocations,
-        uint256[] memory _netAPYs
-    ) internal pure returns (uint256 _weightedAPY) {
-        if (_allocations.length != _netAPYs.length) {
+        uint256[] memory _netApYs
+    ) internal pure returns (uint256 _weightedApy) {
+        if (_allocations.length != _netApYs.length) {
             revert arrayOutOfBound();
         }
         uint256 result;
         for (uint256 i = 0; i < _allocations.length; i++) {
-            result += _allocations[i] * _netAPYs[i];
+            result += _allocations[i] * _netApYs[i];
         }
-        _weightedAPY = result / 10_000;
-        return _weightedAPY;
+        _weightedApy = result / 10_000;
+        return _weightedApy;
     }
 
     function validateAllocation(

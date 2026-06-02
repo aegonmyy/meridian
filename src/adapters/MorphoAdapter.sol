@@ -15,8 +15,8 @@ contract morphoAdapter is IYieldSource {
     using MathLib for uint256;
 
     MarketParams public marketparams;
-    IERC20 public immutable asset;
-    IMorpho public immutable morpho;
+    IERC20 public immutable ASSET;
+    IMorpho public immutable MORPHO;
 
     /// @notice Raised when a required constructor address is zero.
     error ZeroAddress();
@@ -47,8 +47,8 @@ contract morphoAdapter is IYieldSource {
         ) {
             revert ZeroAddress();
         }
-        asset = IERC20(_asset);
-        morpho = IMorpho(_morpho);
+        ASSET = IERC20(_asset);
+        MORPHO = IMorpho(_morpho);
         marketparams = MarketParams({
             loanToken: _loanToken,
             collateralToken: _collateralToken,
@@ -56,37 +56,37 @@ contract morphoAdapter is IYieldSource {
             irm: _irm,
             lltv: _lltv
         });
-        asset.forceApprove(_morpho, type(uint256).max);
+        ASSET.forceApprove(_morpho, type(uint256).max);
     }
 
     /// @inheritdoc IYieldSource
     function deposit(uint256 _amount) external {
         MarketParams memory params = marketparams;
-        asset.safeTransferFrom(msg.sender, address(this), _amount);
-        morpho.supply(params, _amount, 0, address(this), "");
+        ASSET.safeTransferFrom(msg.sender, address(this), _amount);
+        MORPHO.supply(params, _amount, 0, address(this), "");
     }
 
     /// @inheritdoc IYieldSource
     function withdraw(uint256 _amount) external {
         MarketParams memory params = marketparams;
-        (uint256 assetsWithdrawn, ) = morpho.withdraw(
+        (uint256 assetsWithdrawn, ) = MORPHO.withdraw(
             params,
             _amount,
             0,
             address(this),
             address(this)
         );
-        asset.safeTransfer(msg.sender, assetsWithdrawn);
+        ASSET.safeTransfer(msg.sender, assetsWithdrawn);
     }
 
     /// @notice Returns underlying assets claimable by this adapter in Morpho.
     /// @dev Uses share-to-asset conversion against current market totals.
     function totalAssets() external view returns (uint256) {
         Id marketId = marketparams.id();
-        Position memory position = morpho.position(marketId, address(this));
+        Position memory position = MORPHO.position(marketId, address(this));
         if (position.supplyShares == 0) return 0;
 
-        Market memory market = morpho.market(marketId);
+        Market memory market = MORPHO.market(marketId);
         if (market.totalSupplyShares == 0) return 0;
 
         return

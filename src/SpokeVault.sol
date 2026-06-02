@@ -4,11 +4,11 @@ pragma solidity ^0.8.33;
 import {CCIPReceiver} from "@chainlink/ccip/applications/CCIPReceiver.sol";
 import {Client} from "@chainlink/ccip/libraries/Client.sol";
 import {IRouterClient} from "@chainlink/ccip/interfaces/IRouterClient.sol";
-import {IYieldSource} from "./interfaces/IYieldSource.sol";
 import {CCIPHelpers} from "./libraries/CCIPHelpers.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IYieldSource} from "./interfaces/IYieldSource.sol";
 
 /// @title SpokeVault
 /// @notice Receives CCIP messages from the hub and manages capital deployment into yield protocols

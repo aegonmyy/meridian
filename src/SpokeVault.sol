@@ -238,7 +238,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
             data: CCIPHelpers.encode(
                 CCIPHelpers.CcipMessage({
                     messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
-                    instructions: _instructions
+                    instructions: _instructions,
+                    spokeBalance: _aggregatedSpokeBalance()
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -293,7 +294,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
             data: CCIPHelpers.encode(
                 CCIPHelpers.CcipMessage({
                     messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
-                    instructions: _instructions
+                    instructions: _instructions,
+                    spokeBalance: _aggregatedSpokeBalance()
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -317,28 +319,21 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      Sends results back to hub as a REPORT_BALANCE message.
     ///      LINK balance must be sufficient to cover the ccip fee.
     function _reportBalance() internal {
-        bytes32[] memory _activeAdapters = activeAdapters;
-        uint256 _length = _activeAdapters.length;
-        if (_length == 0) revert NoActiveAdapters();
-        uint256 totalAssets;
-        for (uint256 i = 0; i < _length; i++) {
-            if (adapters[_activeAdapters[i]].exists == false) continue;
-            totalAssets += adapters[_activeAdapters[i]].adapter.totalAssets();
-        }
         Client.EVMTokenAmount[]
             memory tokenAmount = new Client.EVMTokenAmount[](0);
         CCIPHelpers.AdapterInstructions[]
             memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
         _instructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: bytes32(0),
-            amount: totalAssets
+            amount: 0
         });
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
                 CCIPHelpers.CcipMessage({
                     messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
-                    instructions: _instructions
+                    instructions: _instructions,
+                    spokeBalance: _aggregatedSpokeBalance()
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -354,5 +349,19 @@ contract SpokeVault is CCIPReceiver, Ownable {
         uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
         LINK.forceApprove(address(router), fee);
         router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
+    }
+
+    function _aggregatedSpokeBalance() internal view returns (uint256) {
+        bytes32[] memory _activeAdapters = activeAdapters;
+        uint256 _length = _activeAdapters.length;
+        if (_length == 0) revert NoActiveAdapters();
+        uint256 aggregatedSpokeBalance;
+        for (uint256 i = 0; i < _length; i++) {
+            if (adapters[_activeAdapters[i]].exists == false) continue;
+            aggregatedSpokeBalance += adapters[_activeAdapters[i]]
+                .adapter
+                .totalAssets();
+        }
+        return aggregatedSpokeBalance;
     }
 }

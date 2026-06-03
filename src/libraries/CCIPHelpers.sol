@@ -17,6 +17,7 @@ library CCIPHelpers {
     struct CcipMessage {
         MessageType messageType;
         AdapterInstructions[] instructions;
+        uint256 spokeBalance;
     }
 
     function encode(

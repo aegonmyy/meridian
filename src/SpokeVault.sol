@@ -96,7 +96,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     error AmountCannotBeZero();
 
     ///@notice Thrown when any of the constructor argument is invalid
-    error invalidConstructorArguments();
+    error InvalidConstructorArguments();
 
     // =========================================================================
     // Constructor
@@ -126,7 +126,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
             _router == address(0) ||
             _link == address(0) ||
             _hubSelector == 0
-        ) revert invalidConstructorArguments();
+        ) revert InvalidConstructorArguments();
         HUB = _hub;
         ASSET = IERC20(_asset);
         HUB_CHAIN_SELECTOR = _hubSelector;
@@ -209,7 +209,6 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      by the time this message arrives the allocation has already been validated on-chain.
     /// @param _message The decoded CCIP message containing adapter id and amount
     function _handleDeposit(CCIPHelpers.CcipMessage memory _message) internal {
-        uint256 _tokenAmount;
         if (_message.instructions.length == 0) revert InvalidMessageType();
         for (uint256 i = 0; i < _message.instructions.length; i++) {
             if (_message.instructions[i].amount == 0)
@@ -225,13 +224,13 @@ contract SpokeVault is CCIPReceiver, Ownable {
             _adapter.adapter.deposit(_message.instructions[i].amount);
         }
         Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](1);
+            memory tokenAmount = new Client.EVMTokenAmount[](0);
 
         CCIPHelpers.AdapterInstructions[]
             memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
         _instructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: bytes32(0),
-            amount: _tokenAmount
+            amount: 0
         });
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
@@ -322,11 +321,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
         Client.EVMTokenAmount[]
             memory tokenAmount = new Client.EVMTokenAmount[](0);
         CCIPHelpers.AdapterInstructions[]
-            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
-        _instructions[0] = CCIPHelpers.AdapterInstructions({
-            adapter: bytes32(0),
-            amount: 0
-        });
+            memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
+
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(

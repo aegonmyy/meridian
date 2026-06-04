@@ -22,7 +22,10 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
 
     struct PendingWithdrawal {
         uint256 shares;
+        uint256 assets;
         uint256 requestedAt;
+        address receiver;
+        bool idleBacked;
     }
 
     struct SpokeInfo {
@@ -38,6 +41,10 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     /// @notice List of all registered spoke chain selectors
     /// @dev Used to iterate spokeBalances in totalManagedAssets()
     uint64[] public spokeChainSelectors;
+
+    /// @notice Total assets reserved for pending withdrawals backed by idle balance
+    /// @dev Prevents over-promising idle balance to concurrent withdrawers
+    uint256 public reservedAssets;
 
     /// @notice Maps chain selector to spoke vault address on that chain
     mapping(uint64 => SpokeInfo) public spokes;
@@ -94,6 +101,15 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     ///@notice Thrown when provided spoke already exists
     error SpokeExists();
 
+    modifier onlyRebalancer() {
+        _onlyRebalancer();
+        _;
+    }
+
+    function _onlyRebalancer() internal view {
+        if (msg.sender != REBALANCER) revert NotRebalancer();
+    }
+
     /// @notice Deploys HubVault with immutable configuration
     /// @dev Parent constructors execute before zero address checks —
     ///      CCIPReceiver validates _router internally.
@@ -131,34 +147,59 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
 
     /// @notice Registers a new spoke or updates an existing spoke address
     /// @dev If spoke already exists, updates address without pushing to array again.
-    /// @param _spokeSelector CCIP chain selector for the spoke chain
+    /// @param _chainSelector CCIP chain selector for the spoke chain
     /// @param _spokeAddress Address of the SpokeVault on that chain
     function addSpoke(
-        uint64 _spokeSelector,
+        uint64 _chainSelector,
         address _spokeAddress
     ) external onlyOwner {
         if (_spokeAddress == address(0)) revert ZeroAddress();
-        if (spokes[_spokeSelector].exists) {
-            spokes[_spokeSelector].spoke = _spokeAddress;
-            emit SpokeAdded(_spokeSelector, _spokeAddress);
+        if (spokes[_chainSelector].exists) {
+            spokes[_chainSelector].spoke = _spokeAddress;
+            emit SpokeAdded(_chainSelector, _spokeAddress);
             return;
         }
 
-        spokes[_spokeSelector].spoke = _spokeAddress;
-        spokes[_spokeSelector].exists = true;
-        spokeChainSelectors.push(_spokeSelector);
-        emit SpokeAdded(_spokeSelector, _spokeAddress);
+        spokes[_chainSelector].spoke = _spokeAddress;
+        spokes[_chainSelector].exists = true;
+        spokeChainSelectors.push(_chainSelector);
+        emit SpokeAdded(_chainSelector, _spokeAddress);
     }
 
     /// @notice Disables a spoke by flipping its exists flag to false
     /// @dev Does not remove from spokeChainSelectors array — inactive entries
     ///      skipped during iteration via exists flag. Emergency mechanism.
-    /// @param _spokeSelector CCIP chain selector of the spoke to disable
-    function removeSpoke(uint64 _spokeSelector) public onlyOwner {
-        if (spokes[_spokeSelector].exists == false) revert SpokeNotFound();
-        spokes[_spokeSelector].exists = false;
-        spokes[_spokeSelector].spoke = address(0);
-        emit SpokeRemoved(_spokeSelector);
+    /// @param _chainSelector CCIP chain selector of the spoke to disable
+    function removeSpoke(uint64 _chainSelector) external onlyOwner {
+        if (spokes[_chainSelector].exists == false) revert SpokeNotFound();
+        spokes[_chainSelector].exists = false;
+        emit SpokeRemoved(_chainSelector);
+    }
+
+    function sendToSpoke(
+        uint64 _chainSelector,
+        CCIPHelpers.AdapterInstructions[] memory _instructions
+    ) external onlyRebalancer {
+        if (!spokes[_chainSelector].exists) revert SpokeNotFound();
+        CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
+            messageType: CCIPHelpers.MessageType.DEPOSIT,
+            instructions: _instructions,
+            spokeBalance: 0
+        });
+        _sendToSpoke(_chainSelector, _message);
+    }
+
+    function recallFromSpoke(
+        uint64 _chainSelector,
+        CCIPHelpers.AdapterInstructions[] memory _instructions
+    ) external onlyRebalancer {
+        if (!spokes[_chainSelector].exists) revert SpokeNotFound();
+        CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
+            messageType: CCIPHelpers.MessageType.WITHDRAW,
+            instructions: _instructions,
+            spokeBalance: 0
+        });
+        _sendToSpoke(_chainSelector, _message);
     }
 
     /// @notice Overrides ERC4626._deposit to track total principal
@@ -194,7 +235,83 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         address owner,
         uint256 assets,
         uint256 shares
-    ) internal override {}
+    ) internal override {
+        if (caller != owner) {
+            _spendAllowance(owner, caller, shares);
+        }
+        _transfer(owner, address(this), shares);
+        uint256 _assets = previewRedeem(shares);
+        uint256 idle = _idleBalance() - reservedAssets;
+        if (idle >= _assets) {
+            reservedAssets += _assets;
+            if (_allSpokesFresh()) {
+                _processWithdrawal();
+            } else {
+                pendingWithdrawals[caller] = PendingWithdrawal({
+                    shares: shares,
+                    assets: _assets,
+                    requestedAt: block.timestamp,
+                    receiver: receiver,
+                    idleBacked: true
+                });
+                //_requestAllBalanceReports();
+            }
+        } else {
+            pendingWithdrawals[caller] = PendingWithdrawal({
+                shares: shares,
+                assets: _assets,
+                requestedAt: block.timestamp,
+                receiver: receiver,
+                idleBacked: false
+            });
+            //this.recallFromSpoke(_chainSelector, _instructions);
+        }
+    }
+
+    function _processWithdrawal() internal {}
+
+    function _sendToSpoke(
+        uint64 _chainSelector,
+        CCIPHelpers.CcipMessage memory _message
+    ) internal {
+        uint256 size;
+        uint256 totalAmount;
+        for (uint256 i = 0; i < _message.instructions.length; i++) {
+            totalAmount += _message.instructions[i].amount;
+        }
+        if (totalAmount > 0) {
+            size = 1;
+        }
+        Client.EVMTokenAmount[]
+            memory tokenAmount = new Client.EVMTokenAmount[](size);
+        if (size == 1) {
+            tokenAmount[0] = Client.EVMTokenAmount({
+                token: address(asset()),
+                amount: totalAmount
+            });
+        }
+        Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
+            receiver: abi.encode(spokes[_chainSelector].spoke),
+            data: CCIPHelpers.encode(_message),
+            tokenAmounts: tokenAmount,
+            feeToken: address(LINK),
+            extraArgs: Client._argsToBytes(
+                Client.EVMExtraArgsV2({
+                    gasLimit: 200_000,
+                    allowOutOfOrderExecution: false
+                })
+            )
+        });
+        IRouterClient router = IRouterClient(getRouter());
+        uint256 fee = router.getFee(_chainSelector, ccipMessage);
+        if (totalAmount > 0) {
+            inTransitAssets += totalAmount;
+            IERC20(asset()).forceApprove(address(router), totalAmount);
+        }
+
+        LINK.forceApprove(address(router), fee);
+        router.ccipSend(_chainSelector, ccipMessage);
+    }
 
     /// @notice Returns total assets per ERC4626 standard — delegates to totalManagedAssets
     /// @dev Overrides ERC4626.totalAssets(). Share price reflects real yield-inclusive value.

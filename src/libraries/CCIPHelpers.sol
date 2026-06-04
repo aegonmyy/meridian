@@ -6,6 +6,7 @@ library CCIPHelpers {
         DEPOSIT,
         WITHDRAW,
         REPORT_BALANCE,
+        WITHDRAW_AMOUNT,
         CONFIRM_RECEIPT
     }
 

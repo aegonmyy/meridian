@@ -197,6 +197,10 @@ contract SpokeVault is CCIPReceiver, Ownable {
             _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
         ) {
             _reportBalance();
+        } else if (
+            _message.messageType == CCIPHelpers.MessageType.WITHDRAW_AMOUNT
+        ) {
+            _handleWithdrawalWithAmount(_message);
         } else {
             revert InvalidMessageType();
         }
@@ -313,6 +317,48 @@ contract SpokeVault is CCIPReceiver, Ownable {
         router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
     }
 
+    function _handleWithdrawalWithAmount(
+        CCIPHelpers.CcipMessage memory _message
+    ) internal {
+        if (_message.instructions.length == 0) revert InvalidMessageType();
+        bytes32[] memory _adapters = activeAdapters;
+        if (_adapters.length == 0) revert();
+        uint256 amountRequested = _message.instructions[0].amount;
+        uint256 _totalSpokeBalance;
+        uint256 _lastIndex;
+        for (uint256 i = 0; i < _adapters.length; i++) {
+            if (!adapters[_adapters[i]].exists) continue;
+            _totalSpokeBalance += adapters[_adapters[i]].adapter.totalAssets();
+            _lastIndex = i;
+        }
+        uint256 totalPulled;
+        for (uint256 i = 0; i < _adapters.length; i++) {
+            uint256 pullAmount;
+            if (i == _lastIndex) {
+                pullAmount = amountRequested - totalPulled;
+            } else {
+                pullAmount =
+                    (amountRequested *
+                        adapters[_adapters[i]].adapter.totalAssets()) /
+                    _totalSpokeBalance;
+            }
+            adapters[_adapters[i]].adapter.withdraw(pullAmount);
+            totalPulled += pullAmount;
+            Client.EVMTokenAmount[]
+                memory tokenAmount = new Client.EVMTokenAmount[](1);
+            tokenAmount[0] = Client.EVMTokenAmount({
+                token: address(ASSET),
+                amount: amountRequested
+            });
+            CCIPHelpers.AdapterInstructions[]
+                memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+            _instructions[0] = CCIPHelpers.AdapterInstructions({
+                adapter: bytes32(0),
+                amount: amountRequested
+            });
+        }
+    }
+
     /// @notice Sums balances across all active adapters and reports total to the hub via CCIP
     /// @dev Iterates activeAdapters array, skipping entries, sums totalAssets() from each adapter.
     ///      Sends results back to hub as a REPORT_BALANCE message.
@@ -350,7 +396,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     function _aggregatedSpokeBalance() internal view returns (uint256) {
         bytes32[] memory _activeAdapters = activeAdapters;
         uint256 _length = _activeAdapters.length;
-        if (_length == 0) revert NoActiveAdapters();
+        if (_length == 0) return 0;
         uint256 aggregatedSpokeBalance;
         for (uint256 i = 0; i < _length; i++) {
             if (adapters[_activeAdapters[i]].exists == false) continue;

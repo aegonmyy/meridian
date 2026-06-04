@@ -344,19 +344,19 @@ contract SpokeVault is CCIPReceiver, Ownable {
             }
             adapters[_adapters[i]].adapter.withdraw(pullAmount);
             totalPulled += pullAmount;
-            Client.EVMTokenAmount[]
-                memory tokenAmount = new Client.EVMTokenAmount[](1);
-            tokenAmount[0] = Client.EVMTokenAmount({
-                token: address(ASSET),
-                amount: amountRequested
-            });
-            CCIPHelpers.AdapterInstructions[]
-                memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
-            _instructions[0] = CCIPHelpers.AdapterInstructions({
-                adapter: bytes32(0),
-                amount: amountRequested
-            });
         }
+        Client.EVMTokenAmount[]
+            memory tokenAmount = new Client.EVMTokenAmount[](1);
+        tokenAmount[0] = Client.EVMTokenAmount({
+            token: address(ASSET),
+            amount: amountRequested
+        });
+        CCIPHelpers.AdapterInstructions[]
+            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+        _instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: bytes32(0),
+            amount: amountRequested
+        });
     }
 
     /// @notice Sums balances across all active adapters and reports total to the hub via CCIP

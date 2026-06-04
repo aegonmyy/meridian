@@ -357,6 +357,29 @@ contract SpokeVault is CCIPReceiver, Ownable {
             adapter: bytes32(0),
             amount: amountRequested
         });
+        Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
+            receiver: abi.encode(HUB),
+            data: CCIPHelpers.encode(
+                CCIPHelpers.CcipMessage({
+                    messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
+                    instructions: _instructions,
+                    spokeBalance: _aggregatedSpokeBalance()
+                })
+            ),
+            tokenAmounts: tokenAmount,
+            feeToken: address(LINK),
+            extraArgs: Client._argsToBytes(
+                Client.EVMExtraArgsV2({
+                    gasLimit: 200_000,
+                    allowOutOfOrderExecution: false
+                })
+            )
+        });
+        IRouterClient router = IRouterClient(getRouter());
+        uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
+        ASSET.forceApprove(address(router), amountRequested);
+        LINK.forceApprove(address(router), fee);
+        router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
     }
 
     /// @notice Sums balances across all active adapters and reports total to the hub via CCIP

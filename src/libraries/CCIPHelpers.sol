@@ -7,7 +7,8 @@ library CCIPHelpers {
         WITHDRAW,
         REPORT_BALANCE,
         WITHDRAW_AMOUNT,
-        CONFIRM_RECEIPT
+        CONFIRM_RECEIPT,
+        CONFIRM_WITHDRAWAL
     }
 
     struct AdapterInstructions {
@@ -19,6 +20,7 @@ library CCIPHelpers {
         MessageType messageType;
         AdapterInstructions[] instructions;
         uint256 spokeBalance;
+        uint256 reportTimestamp;
     }
 
     function encode(

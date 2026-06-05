@@ -231,18 +231,15 @@ contract SpokeVault is CCIPReceiver, Ownable {
             memory tokenAmount = new Client.EVMTokenAmount[](0);
 
         CCIPHelpers.AdapterInstructions[]
-            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
-        _instructions[0] = CCIPHelpers.AdapterInstructions({
-            adapter: bytes32(0),
-            amount: 0
-        });
+            memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
                 CCIPHelpers.CcipMessage({
                     messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
                     instructions: _instructions,
-                    spokeBalance: _aggregatedSpokeBalance()
+                    spokeBalance: _aggregatedSpokeBalance(),
+                    reportTimestamp: block.timestamp
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -296,9 +293,10 @@ contract SpokeVault is CCIPReceiver, Ownable {
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
                 CCIPHelpers.CcipMessage({
-                    messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
+                    messageType: CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
                     instructions: _instructions,
-                    spokeBalance: _aggregatedSpokeBalance()
+                    spokeBalance: _aggregatedSpokeBalance(),
+                    reportTimestamp: block.timestamp
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -362,9 +360,10 @@ contract SpokeVault is CCIPReceiver, Ownable {
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
                 CCIPHelpers.CcipMessage({
-                    messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
+                    messageType: CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
                     instructions: _instructions,
-                    spokeBalance: _aggregatedSpokeBalance()
+                    spokeBalance: _aggregatedSpokeBalance(),
+                    reportTimestamp: block.timestamp
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -399,7 +398,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
                 CCIPHelpers.CcipMessage({
                     messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
                     instructions: _instructions,
-                    spokeBalance: _aggregatedSpokeBalance()
+                    spokeBalance: _aggregatedSpokeBalance(),
+                    reportTimestamp: block.timestamp
                 })
             ),
             tokenAmounts: tokenAmount,

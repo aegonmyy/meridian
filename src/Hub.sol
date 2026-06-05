@@ -52,6 +52,9 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     /// @notice Maps chain selector to spoke vault address on that chain
     mapping(uint64 => SpokeInfo) public spokes;
 
+    ///@notice Sole purpose is to determine if a spoke is valid
+    mapping(address => bool) public isValidSpoke;
+
     /// @notice Last reported total balance per spoke chain
     /// @dev Updated on every CONFIRM_RECEIPT and REPORT_BALANCE message from spokes
     mapping(uint64 => uint256) public spokeBalances;
@@ -111,6 +114,9 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
 
     /// @notice Thrown when user already has a pending withdrawal
     error WithdrawalAlreadyPending();
+
+    /// @notice Thrown when a CCIP message contains an unrecognised message type
+    error InvalidMessageType();
 
     /// @notice Thrown when no pending withdrawal exists for this address
     error NoPendingWithdrawal();
@@ -200,7 +206,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
             emit SpokeAdded(_chainSelector, _spokeAddress);
             return;
         }
-
+        isValidSpoke[_spokeAddress] = true;
         spokes[_chainSelector].spoke = _spokeAddress;
         spokes[_chainSelector].exists = true;
         spokeChainSelectors.push(_chainSelector);
@@ -213,6 +219,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     /// @param _chainSelector CCIP chain selector of the spoke to disable
     function removeSpoke(uint64 _chainSelector) external onlyOwner {
         if (spokes[_chainSelector].exists == false) revert SpokeNotFound();
+        isValidSpoke[spokes[_chainSelector].spoke] = false;
         spokes[_chainSelector].exists = false;
         emit SpokeRemoved(_chainSelector);
     }
@@ -229,7 +236,8 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.DEPOSIT,
             instructions: _instructions,
-            spokeBalance: 0
+            spokeBalance: 0,
+            reportTimestamp: block.timestamp
         });
         _sendToSpoke(_chainSelector, _message);
     }
@@ -246,7 +254,8 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.WITHDRAW_AMOUNT,
             instructions: _instructions,
-            spokeBalance: 0
+            spokeBalance: 0,
+            reportTimestamp: block.timestamp
         });
         _sendToSpoke(_chainSelector, _message);
     }
@@ -341,6 +350,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         reservedAssets -= assets;
         _burn(address(this), shares);
         IERC20(asset()).safeTransfer(receiver, assets);
+        emit WithdrawalProcessed(owner, receiver, assets);
     }
 
     /// @notice Sends REPORT_BALANCE messages to all active spokes
@@ -356,7 +366,8 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
             CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
                 messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
                 instructions: _instructions,
-                spokeBalance: 0
+                spokeBalance: 0,
+                reportTimestamp: block.timestamp
             });
             _sendToSpoke(selectors[i], _message);
         }
@@ -460,7 +471,28 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     /// @param message Incoming CCIP message struct delivered by the router
     function _ccipReceive(
         Client.Any2EVMMessage memory message
-    ) internal override {}
+    ) internal override {
+        if (!isValidSpoke[abi.decode(message.sender, (address))])
+            revert NotSpoke();
+        CCIPHelpers.CcipMessage memory _message = CCIPHelpers.decode(
+            message.data
+        );
+        if (
+            _message.messageType == CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL
+        ) {
+            _handleWithdrawalCallback();
+        } else if (
+            _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
+        ) {
+            _handleReportBalanceCallback();
+        } else if (
+            _message.messageType == CCIPHelpers.MessageType.CONFIRM_RECEIPT
+        ) {
+            _handleDepositCallback();
+        } else {
+            revert InvalidMessageType();
+        }
+    }
 
     /// @notice Returns the USDC balance currently sitting idle on the hub
     /// @dev Does not include in-transit or spoke-deployed capital
@@ -487,4 +519,10 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         }
         return true;
     }
+
+    function _handleDepositCallback() internal {}
+
+    function _handleReportBalanceCallback() internal {}
+
+    function _handleWithdrawalCallback() internal {}
 }

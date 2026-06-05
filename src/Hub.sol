@@ -20,6 +20,8 @@ import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.so
 contract HubVault is ERC4626, CCIPReceiver, Ownable {
     using SafeERC20 for IERC20;
 
+    /// @notice Tracks a queued withdrawal awaiting spoke balance confirmation or fund recall
+    /// @dev idleBacked true means idle balance is reserved — false means spoke recall in flight
     struct PendingWithdrawal {
         uint256 shares;
         uint256 assets;
@@ -27,7 +29,8 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         address receiver;
         bool idleBacked;
     }
-
+    /// @notice Stores spoke address and registration status per chain
+    /// @dev exists flag is source of truth — used to skip inactive spokes during iteration
     struct SpokeInfo {
         address spoke;
         bool exists;
@@ -70,12 +73,47 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     /// @notice Sum of all user deposits minus withdrawals — used as principal floor
     uint256 public totalPrincipal;
 
+    /// @notice Emitted when a withdrawal is queued pending spoke balance confirmation
+    /// @param owner Address whose shares are locked
+    /// @param shares Amount of shares locked
+    /// @param assets Amount of assets owed
+    /// @param idleBacked Whether idle balance is reserved for this withdrawal
+    event WithdrawalQueued(
+        address indexed owner,
+        uint256 shares,
+        uint256 assets,
+        bool idleBacked
+    );
+
+    /// @notice Emitted when a queued withdrawal is completed
+    /// @param owner Address whose shares were burned
+    /// @param receiver Address that received the USDC
+    /// @param assets Amount of USDC transferred
+    event WithdrawalProcessed(
+        address indexed owner,
+        address indexed receiver,
+        uint256 assets
+    );
     event SpokeAdded(
         uint64 indexed spokeSelector,
         address indexed spokeAddress
     );
 
+    /// @notice Emitted when spoke balance is updated from an incoming CCIP message
+    /// @param chainSelector Chain selector of the reporting spoke
+    /// @param balance Updated spoke balance
+    event SpokeBalanceUpdated(uint64 indexed chainSelector, uint256 balance);
+
     event SpokeRemoved(uint64 indexed spokeSelector);
+
+    /// @notice Thrown when no active spokes are registered
+    error NoActiveSpokes();
+
+    /// @notice Thrown when user already has a pending withdrawal
+    error WithdrawalAlreadyPending();
+
+    /// @notice Thrown when no pending withdrawal exists for this address
+    error NoPendingWithdrawal();
 
     /// @notice Thrown when a constructor argument is zero address
     error InvalidConstructorArguments();
@@ -101,6 +139,8 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     ///@notice Thrown when provided spoke already exists
     error SpokeExists();
 
+    /// @notice Restricts access to the Rebalancer contract or the hub itself
+    /// @dev Hub calls recallFromSpoke internally for user withdrawal path
     modifier onlyRebalancer() {
         _onlyRebalancer();
         _;
@@ -177,6 +217,10 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         emit SpokeRemoved(_chainSelector);
     }
 
+    /// @notice Sends USDC and deposit instructions to a spoke via CCIP
+    /// @dev Only callable by Rebalancer. Builds DEPOSIT message and delegates to _sendToSpoke.
+    /// @param _chainSelector CCIP chain selector of the destination spoke
+    /// @param _instructions Array of adapter instructions — adapter id and amount per market
     function sendToSpoke(
         uint64 _chainSelector,
         CCIPHelpers.AdapterInstructions[] memory _instructions
@@ -190,6 +234,10 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         _sendToSpoke(_chainSelector, _message);
     }
 
+    /// @notice Sends withdrawal instructions to a spoke via CCIP
+    /// @dev Only callable by Rebalancer or hub internally. Uses WITHDRAW_AMOUNT — spoke decides which adapters to pull from.
+    /// @param _chainSelector CCIP chain selector of the target spoke
+    /// @param _instructions Array with single entry — adapter bytes32(0), amount to recall
     function recallFromSpoke(
         uint64 _chainSelector,
         CCIPHelpers.AdapterInstructions[] memory _instructions
@@ -276,6 +324,13 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         }
     }
 
+    /// @notice Executes immediate settlement of a withdrawal
+    /// @dev Burns shares held by contract, transfers assets to receiver, updates accounting.
+    ///      Called on Path 1 (synchronous) and from _ccipReceive when pending withdrawal completes.
+    /// @param owner Address whose shares are burned
+    /// @param receiver Address receiving the USDC
+    /// @param shares Amount of shares to burn
+    /// @param assets Amount of USDC to transfer
     function _processWithdrawal(
         address owner,
         address receiver,
@@ -288,13 +343,16 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         IERC20(asset()).safeTransfer(receiver, assets);
     }
 
+    /// @notice Sends REPORT_BALANCE messages to all active spokes
+    /// @dev Called when withdrawal is queued and balances are stale (Path 2).
+    ///      Balance updates arrive asynchronously via _ccipReceive.
     function _requestAllBalanceReports() internal {
         uint64[] memory selectors = spokeChainSelectors;
 
         for (uint i = 0; i < selectors.length; i++) {
             if (!spokes[selectors[i]].exists) continue;
             CCIPHelpers.AdapterInstructions[]
-                memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+                memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
             CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
                 messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
                 instructions: _instructions,
@@ -304,6 +362,10 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         }
     }
 
+    /// @notice Returns the chain selector of the spoke with the highest reported balance
+    /// @dev Used to determine which spoke to recall from for user withdrawals.
+    ///      Relies on spokeBalances which may be slightly stale — safe since balances only grow.
+    /// @return bestSelector Chain selector of the spoke with highest balance
     function _findBestSpoke() internal view returns (uint64) {
         uint64[] memory selectors = spokeChainSelectors;
         uint64 bestSelector;
@@ -318,6 +380,12 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         return bestSelector;
     }
 
+    /// @notice Builds and sends a CCIP message to a spoke
+    /// @dev Handles both pure instruction messages and programmable token transfers.
+    ///      If total instruction amount > 0, attaches USDC as tokenAmounts and increments inTransitAssets.
+    ///      Fees paid in LINK — contract must hold sufficient LINK balance.
+    /// @param _chainSelector Destination chain selector
+    /// @param _message Encoded CcipMessage containing type, instructions, and spoke balance
     function _sendToSpoke(
         uint64 _chainSelector,
         CCIPHelpers.CcipMessage memory _message
@@ -386,6 +454,10 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         return total;
     }
 
+    /// @notice Handles incoming CCIP messages from registered spokes
+    /// @dev Validates message origin — only registered spoke addresses accepted.
+    ///      Routes CONFIRM_RECEIPT and REPORT_BALANCE to their respective handlers.
+    /// @param message Incoming CCIP message struct delivered by the router
     function _ccipReceive(
         Client.Any2EVMMessage memory message
     ) internal override {}

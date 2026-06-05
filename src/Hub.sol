@@ -107,7 +107,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     }
 
     function _onlyRebalancer() internal view {
-        if (msg.sender != REBALANCER || msg.sender != address(this))
+        if (msg.sender != REBALANCER && msg.sender != address(this))
             revert NotRebalancer();
     }
 
@@ -196,7 +196,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     ) external onlyRebalancer {
         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
-            messageType: CCIPHelpers.MessageType.WITHDRAW,
+            messageType: CCIPHelpers.MessageType.WITHDRAW_AMOUNT,
             instructions: _instructions,
             spokeBalance: 0
         });
@@ -246,7 +246,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         if (idle >= assets) {
             reservedAssets += assets;
             if (_allSpokesFresh()) {
-                _processWithdrawal();
+                _processWithdrawal(owner, receiver, shares, assets);
             } else {
                 pendingWithdrawals[owner] = PendingWithdrawal({
                     shares: shares,
@@ -255,7 +255,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
                     receiver: receiver,
                     idleBacked: true
                 });
-                //_requestAllBalanceReports();
+                _requestAllBalanceReports();
             }
         } else {
             pendingWithdrawals[owner] = PendingWithdrawal({
@@ -276,7 +276,33 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         }
     }
 
-    function _processWithdrawal() internal {}
+    function _processWithdrawal(
+        address owner,
+        address receiver,
+        uint256 shares,
+        uint256 assets
+    ) internal {
+        totalPrincipal -= assets;
+        reservedAssets -= assets;
+        _burn(address(this), shares);
+        IERC20(asset()).safeTransfer(receiver, assets);
+    }
+
+    function _requestAllBalanceReports() internal {
+        uint64[] memory selectors = spokeChainSelectors;
+
+        for (uint i = 0; i < selectors.length; i++) {
+            if (!spokes[selectors[i]].exists) continue;
+            CCIPHelpers.AdapterInstructions[]
+                memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+            CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
+                messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
+                instructions: _instructions,
+                spokeBalance: 0
+            });
+            _sendToSpoke(selectors[i], _message);
+        }
+    }
 
     function _findBestSpoke() internal view returns (uint64) {
         uint64[] memory selectors = spokeChainSelectors;

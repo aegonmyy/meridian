@@ -322,7 +322,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ) internal {
         if (_message.instructions.length == 0) revert InvalidMessageType();
         bytes32[] memory _adapters = activeAdapters;
-        if (_adapters.length == 0) revert();
+        if (_adapters.length == 0) revert AdapterNotFound();
         uint256 amountRequested = _message.instructions[0].amount;
         uint256 _totalSpokeBalance;
         uint256 _lastIndex;
@@ -333,6 +333,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
         }
         uint256 totalPulled;
         for (uint256 i = 0; i < _adapters.length; i++) {
+            if (!adapters[_adapters[i]].exists) continue;
             uint256 pullAmount;
             if (i == _lastIndex) {
                 pullAmount = amountRequested - totalPulled;

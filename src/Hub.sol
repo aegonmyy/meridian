@@ -107,7 +107,8 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     }
 
     function _onlyRebalancer() internal view {
-        if (msg.sender != REBALANCER) revert NotRebalancer();
+        if (msg.sender != REBALANCER || msg.sender != address(this))
+            revert NotRebalancer();
     }
 
     /// @notice Deploys HubVault with immutable configuration
@@ -240,16 +241,16 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
             _spendAllowance(owner, caller, shares);
         }
         _transfer(owner, address(this), shares);
-        uint256 _assets = previewRedeem(shares);
+        assets = previewRedeem(shares);
         uint256 idle = _idleBalance() - reservedAssets;
-        if (idle >= _assets) {
-            reservedAssets += _assets;
+        if (idle >= assets) {
+            reservedAssets += assets;
             if (_allSpokesFresh()) {
                 _processWithdrawal();
             } else {
-                pendingWithdrawals[caller] = PendingWithdrawal({
+                pendingWithdrawals[owner] = PendingWithdrawal({
                     shares: shares,
-                    assets: _assets,
+                    assets: assets,
                     requestedAt: block.timestamp,
                     receiver: receiver,
                     idleBacked: true
@@ -257,18 +258,39 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
                 //_requestAllBalanceReports();
             }
         } else {
-            pendingWithdrawals[caller] = PendingWithdrawal({
+            pendingWithdrawals[owner] = PendingWithdrawal({
                 shares: shares,
-                assets: _assets,
+                assets: assets,
                 requestedAt: block.timestamp,
                 receiver: receiver,
                 idleBacked: false
             });
-            //this.recallFromSpoke(_chainSelector, _instructions);
+            uint64 _chainSelector = _findBestSpoke();
+            CCIPHelpers.AdapterInstructions[]
+                memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+            _instructions[0] = CCIPHelpers.AdapterInstructions({
+                adapter: bytes32(0),
+                amount: assets
+            });
+            this.recallFromSpoke(_chainSelector, _instructions);
         }
     }
 
     function _processWithdrawal() internal {}
+
+    function _findBestSpoke() internal view returns (uint64) {
+        uint64[] memory selectors = spokeChainSelectors;
+        uint64 bestSelector;
+        uint256 bestBalance;
+        for (uint256 i = 0; i < selectors.length; i++) {
+            if (spokes[selectors[i]].exists == false) continue;
+            if (spokeBalances[selectors[i]] > bestBalance) {
+                bestBalance = spokeBalances[selectors[i]];
+                bestSelector = selectors[i];
+            }
+        }
+        return bestSelector;
+    }
 
     function _sendToSpoke(
         uint64 _chainSelector,
@@ -357,6 +379,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         uint64[] memory selectors = spokeChainSelectors;
         if (selectors.length == 0) return false;
         for (uint256 i = 0; i < selectors.length; i++) {
+            if (spokes[selectors[i]].exists == false) continue;
             if (
                 block.timestamp - lastReportTimestamp[selectors[i]] >
                 MAX_STALENESS

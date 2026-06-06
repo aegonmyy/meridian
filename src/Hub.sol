@@ -314,7 +314,14 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         if (idle >= assets) {
             reservedAssets += assets;
             if (_allSpokesFresh()) {
-                _processWithdrawal(owner, receiver, shares, assets, _messageId);
+                _processWithdrawal(
+                    owner,
+                    receiver,
+                    shares,
+                    assets,
+                    true,
+                    _messageId
+                );
             } else {
                 pendingWithdrawals[_messageId] = PendingWithdrawal({
                     owner: owner,
@@ -325,6 +332,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
                     idleBacked: true
                 });
                 _requestAllBalanceReports(_messageId);
+                emit WithdrawalQueued(owner, shares, assets, true);
             }
         } else {
             pendingWithdrawals[_messageId] = PendingWithdrawal({
@@ -343,6 +351,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
                 amount: assets
             });
             this.recallFromSpoke(_chainSelector, _instructions, _messageId);
+            emit WithdrawalQueued(owner, shares, assets, false);
         }
     }
 
@@ -358,10 +367,13 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         address receiver,
         uint256 shares,
         uint256 assets,
+        bool idleBacked,
         bytes32 _messageId
     ) internal {
         totalPrincipal -= assets;
-        reservedAssets -= assets;
+        if (idleBacked) {
+            reservedAssets -= assets;
+        }
         _burn(address(this), shares);
         IERC20(asset()).safeTransfer(receiver, assets);
         emit WithdrawalProcessed(owner, receiver, assets, _messageId);
@@ -494,10 +506,11 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
             message.data
         );
         uint64 _chainSelector = message.sourceChainSelector;
+        uint256 _amountArrived = _message.instructions[0].amount;
         if (
             _message.messageType == CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL
         ) {
-            _handleWithdrawalCallback(_message, _chainSelector);
+            _handleWithdrawalCallback(_message, _chainSelector, _amountArrived);
         } else if (
             _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
         ) {
@@ -562,14 +575,33 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
                 pendingWithdrawals[_messageId].receiver,
                 pendingWithdrawals[_messageId].shares,
                 pendingWithdrawals[_messageId].assets,
+                pendingWithdrawals[_messageId].idleBacked,
                 _messageId
             );
+            delete pendingWithdrawals[_messageId];
         }
-        delete pendingWithdrawals[_messageId];
     }
 
     function _handleWithdrawalCallback(
         CCIPHelpers.CcipMessage memory _message,
-        uint64 _chainSelector
-    ) internal {}
+        uint64 _chainSelector,
+        uint256 _amountArrived
+    ) internal {
+        bytes32 _messageId = _message.messageId;
+        spokeBalances[_chainSelector] = _message.spokeBalance;
+        lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
+        emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
+        totalPrincipal += _amountArrived;
+        if (pendingWithdrawals[_messageId].shares > 0) {
+            _processWithdrawal(
+                pendingWithdrawals[_messageId].owner,
+                pendingWithdrawals[_messageId].receiver,
+                pendingWithdrawals[_messageId].shares,
+                pendingWithdrawals[_messageId].assets,
+                pendingWithdrawals[_messageId].idleBacked,
+                _messageId
+            );
+            delete pendingWithdrawals[_messageId];
+        }
+    }
 }

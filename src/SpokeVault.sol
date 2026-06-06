@@ -240,7 +240,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
                     instructions: _instructions,
                     spokeBalance: _aggregatedSpokeBalance(),
                     reportTimestamp: block.timestamp,
-                    messageId: bytes32(0)
+                    messageId: _message.messageId
                 })
             ),
             tokenAmounts: tokenAmount,

@@ -196,7 +196,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
         } else if (
             _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
         ) {
-            _reportBalance();
+            _reportBalance(_message);
         } else if (
             _message.messageType == CCIPHelpers.MessageType.WITHDRAW_AMOUNT
         ) {
@@ -239,7 +239,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
                     messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
                     instructions: _instructions,
                     spokeBalance: _aggregatedSpokeBalance(),
-                    reportTimestamp: block.timestamp
+                    reportTimestamp: block.timestamp,
+                    messageId: bytes32(0)
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -296,7 +297,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
                     messageType: CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
                     instructions: _instructions,
                     spokeBalance: _aggregatedSpokeBalance(),
-                    reportTimestamp: block.timestamp
+                    reportTimestamp: block.timestamp,
+                    messageId: _message.messageId
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -363,7 +365,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
                     messageType: CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
                     instructions: _instructions,
                     spokeBalance: _aggregatedSpokeBalance(),
-                    reportTimestamp: block.timestamp
+                    reportTimestamp: block.timestamp,
+                    messageId: _message.messageId
                 })
             ),
             tokenAmounts: tokenAmount,
@@ -386,7 +389,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @dev Iterates activeAdapters array, skipping entries, sums totalAssets() from each adapter.
     ///      Sends results back to hub as a REPORT_BALANCE message.
     ///      LINK balance must be sufficient to cover the ccip fee.
-    function _reportBalance() internal {
+    function _reportBalance(CCIPHelpers.CcipMessage memory _message) internal {
         Client.EVMTokenAmount[]
             memory tokenAmount = new Client.EVMTokenAmount[](0);
         CCIPHelpers.AdapterInstructions[]
@@ -399,7 +402,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
                     messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
                     instructions: _instructions,
                     spokeBalance: _aggregatedSpokeBalance(),
-                    reportTimestamp: block.timestamp
+                    reportTimestamp: block.timestamp,
+                    messageId: _message.messageId
                 })
             ),
             tokenAmounts: tokenAmount,

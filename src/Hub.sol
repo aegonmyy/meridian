@@ -27,6 +27,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         uint256 assets;
         uint256 requestedAt;
         address receiver;
+        address owner;
         bool idleBacked;
     }
     /// @notice Stores spoke address and registration status per chain
@@ -64,7 +65,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     mapping(uint64 => uint256) public lastReportTimestamp;
 
     /// @notice Pending withdrawal requests awaiting fresh spoke balances
-    mapping(address => PendingWithdrawal) public pendingWithdrawals;
+    mapping(bytes32 => PendingWithdrawal) public pendingWithdrawals; //flagged
 
     /// @notice Maximum age of spoke balance report before considered stale
     uint256 public constant MAX_STALENESS = 1 hours;
@@ -72,6 +73,8 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     /// @notice USDC currently in CCIP transit — sent but not yet confirmed by spoke
     /// @dev Incremented on ccipSend, decremented on CONFIRM_RECEIPT
     uint256 public inTransitAssets;
+
+    mapping(bytes32 => uint256) public inTransitAmount;
 
     /// @notice Sum of all user deposits minus withdrawals — used as principal floor
     uint256 public totalPrincipal;
@@ -95,7 +98,8 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     event WithdrawalProcessed(
         address indexed owner,
         address indexed receiver,
-        uint256 assets
+        uint256 assets,
+        bytes32 messageId
     );
     event SpokeAdded(
         uint64 indexed spokeSelector,
@@ -233,11 +237,15 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.AdapterInstructions[] memory _instructions
     ) external onlyRebalancer {
         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
+        bytes32 _messageId = keccak256(
+            abi.encodePacked(_instructions[0].amount, block.timestamp)
+        );
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.DEPOSIT,
             instructions: _instructions,
             spokeBalance: 0,
-            reportTimestamp: block.timestamp
+            reportTimestamp: block.timestamp,
+            messageId: _messageId
         });
         _sendToSpoke(_chainSelector, _message);
     }
@@ -248,14 +256,16 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
     /// @param _instructions Array with single entry — adapter bytes32(0), amount to recall
     function recallFromSpoke(
         uint64 _chainSelector,
-        CCIPHelpers.AdapterInstructions[] memory _instructions
+        CCIPHelpers.AdapterInstructions[] memory _instructions,
+        bytes32 _messageId
     ) external onlyRebalancer {
         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.WITHDRAW_AMOUNT,
             instructions: _instructions,
             spokeBalance: 0,
-            reportTimestamp: block.timestamp
+            reportTimestamp: block.timestamp,
+            messageId: _messageId
         });
         _sendToSpoke(_chainSelector, _message);
     }
@@ -300,22 +310,25 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         _transfer(owner, address(this), shares);
         assets = previewRedeem(shares);
         uint256 idle = _idleBalance() - reservedAssets;
+        bytes32 _messageId = keccak256(abi.encode(receiver, block.timestamp));
         if (idle >= assets) {
             reservedAssets += assets;
             if (_allSpokesFresh()) {
-                _processWithdrawal(owner, receiver, shares, assets);
+                _processWithdrawal(owner, receiver, shares, assets, _messageId);
             } else {
-                pendingWithdrawals[owner] = PendingWithdrawal({
+                pendingWithdrawals[_messageId] = PendingWithdrawal({
+                    owner: owner,
                     shares: shares,
                     assets: assets,
                     requestedAt: block.timestamp,
                     receiver: receiver,
                     idleBacked: true
                 });
-                _requestAllBalanceReports();
+                _requestAllBalanceReports(_messageId);
             }
         } else {
-            pendingWithdrawals[owner] = PendingWithdrawal({
+            pendingWithdrawals[_messageId] = PendingWithdrawal({
+                owner: owner,
                 shares: shares,
                 assets: assets,
                 requestedAt: block.timestamp,
@@ -329,7 +342,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
                 adapter: bytes32(0),
                 amount: assets
             });
-            this.recallFromSpoke(_chainSelector, _instructions);
+            this.recallFromSpoke(_chainSelector, _instructions, _messageId);
         }
     }
 
@@ -344,19 +357,20 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         address owner,
         address receiver,
         uint256 shares,
-        uint256 assets
+        uint256 assets,
+        bytes32 _messageId
     ) internal {
         totalPrincipal -= assets;
         reservedAssets -= assets;
         _burn(address(this), shares);
         IERC20(asset()).safeTransfer(receiver, assets);
-        emit WithdrawalProcessed(owner, receiver, assets);
+        emit WithdrawalProcessed(owner, receiver, assets, _messageId);
     }
 
     /// @notice Sends REPORT_BALANCE messages to all active spokes
     /// @dev Called when withdrawal is queued and balances are stale (Path 2).
     ///      Balance updates arrive asynchronously via _ccipReceive.
-    function _requestAllBalanceReports() internal {
+    function _requestAllBalanceReports(bytes32 _messageId) internal {
         uint64[] memory selectors = spokeChainSelectors;
 
         for (uint i = 0; i < selectors.length; i++) {
@@ -367,7 +381,8 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
                 messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
                 instructions: _instructions,
                 spokeBalance: 0,
-                reportTimestamp: block.timestamp
+                reportTimestamp: block.timestamp,
+                messageId: _messageId
             });
             _sendToSpoke(selectors[i], _message);
         }
@@ -433,6 +448,7 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         uint256 fee = router.getFee(_chainSelector, ccipMessage);
         if (totalAmount > 0) {
             inTransitAssets += totalAmount;
+            inTransitAmount[_message.messageId] = totalAmount;
             IERC20(asset()).forceApprove(address(router), totalAmount);
         }
 
@@ -477,18 +493,19 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.decode(
             message.data
         );
+        uint64 _chainSelector = message.sourceChainSelector;
         if (
             _message.messageType == CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL
         ) {
-            _handleWithdrawalCallback();
+            _handleWithdrawalCallback(_message, _chainSelector);
         } else if (
             _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
         ) {
-            _handleReportBalanceCallback();
+            _handleReportBalanceCallback(_message, _chainSelector);
         } else if (
             _message.messageType == CCIPHelpers.MessageType.CONFIRM_RECEIPT
         ) {
-            _handleDepositCallback();
+            _handleDepositCallback(_message, _chainSelector);
         } else {
             revert InvalidMessageType();
         }
@@ -520,9 +537,39 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         return true;
     }
 
-    function _handleDepositCallback() internal {}
+    function _handleDepositCallback(
+        CCIPHelpers.CcipMessage memory _message,
+        uint64 _chainSelector
+    ) internal {
+        spokeBalances[_chainSelector] = _message.spokeBalance;
+        lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
+        inTransitAssets -= inTransitAmount[_message.messageId];
+        delete inTransitAmount[_message.messageId];
+        emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
+    }
 
-    function _handleReportBalanceCallback() internal {}
+    function _handleReportBalanceCallback(
+        CCIPHelpers.CcipMessage memory _message,
+        uint64 _chainSelector
+    ) internal {
+        bytes32 _messageId = _message.messageId;
+        spokeBalances[_chainSelector] = _message.spokeBalance;
+        lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
+        emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
+        if (pendingWithdrawals[_messageId].shares > 0) {
+            _processWithdrawal(
+                pendingWithdrawals[_messageId].owner,
+                pendingWithdrawals[_messageId].receiver,
+                pendingWithdrawals[_messageId].shares,
+                pendingWithdrawals[_messageId].assets,
+                _messageId
+            );
+        }
+        delete pendingWithdrawals[_messageId];
+    }
 
-    function _handleWithdrawalCallback() internal {}
+    function _handleWithdrawalCallback(
+        CCIPHelpers.CcipMessage memory _message,
+        uint64 _chainSelector
+    ) internal {}
 }

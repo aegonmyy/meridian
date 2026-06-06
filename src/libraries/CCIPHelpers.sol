@@ -21,6 +21,7 @@ library CCIPHelpers {
         AdapterInstructions[] instructions;
         uint256 spokeBalance;
         uint256 reportTimestamp;
+        bytes32 messageId;
     }
 
     function encode(

@@ -1,8 +1,6 @@
 // SPD,Licens,Identifier: MIT
 pragma solidity 0.8.33;
 
-import {CCIPHelpers} from "./libraries/CCIPHelpers.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {AllocationMaths} from "./libraries/AllocationMaths.sol";
 import {IHub} from "./interfaces/IHub.sol";
 
@@ -95,6 +93,8 @@ contract Rebalancer {
 
     constructor(address _hub, address _agentConsumer, address _owner) {
         HUB = IHub(_hub);
+        AGENT_CONSUMER = _agentConsumer;
+        owner = _owner;
     }
 
     function addChainToWhitelist(uint64 chainSelector) external {}

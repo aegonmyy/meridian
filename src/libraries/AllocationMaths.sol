@@ -67,7 +67,7 @@ library AllocationMaths {
         uint256[][] memory allocations,
         uint256 totalAssets
     ) internal pure returns (bool) {
-        uint256 maxMove = (totalAssets * 3_000) / 10_000; // 30%
+        uint256 maxMove = (totalAssets * 3_000) / 10_000;
         for (uint256 i = 0; i < allocations.length; i++) {
             for (uint256 j = 0; j < allocations[i].length; j++) {
                 uint256 amount = (allocations[i][j] * totalAssets) / 10_000;

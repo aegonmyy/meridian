@@ -17,7 +17,7 @@ import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.so
 ///      spoke vaults on L2s via Chainlink CCIP. Share price reflects total managed assets
 ///      across all spokes. Only the Rebalancer can move capital between hub and spokes.
 
-contract HubVault is ERC4626, CCIPReceiver, Ownable {
+contract HUB is ERC4626, CCIPReceiver, Ownable {
     using SafeERC20 for IERC20;
 
     /// @notice Tracks a queued withdrawal awaiting spoke balance confirmation or fund recall
@@ -237,9 +237,15 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.AdapterInstructions[] memory _instructions
     ) external onlyRebalancer {
         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
-        bytes32 _messageId = keccak256(
-            abi.encodePacked(_instructions[0].amount, block.timestamp)
-        );
+        bytes32 _messageId;
+        uint256 _amount = _instructions[0].amount;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, _amount)
+            mstore(add(ptr, 0x20), timestamp())
+            _messageId := keccak256(ptr, 0x40)
+            mstore(0x40, add(ptr, 0x40))
+        }
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.DEPOSIT,
             instructions: _instructions,
@@ -310,7 +316,14 @@ contract HubVault is ERC4626, CCIPReceiver, Ownable {
         _transfer(owner, address(this), shares);
         assets = previewRedeem(shares);
         uint256 idle = _idleBalance() - reservedAssets;
-        bytes32 _messageId = keccak256(abi.encode(receiver, block.timestamp));
+        bytes32 _messageId;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, receiver)
+            mstore(add(ptr, 0x20), timestamp())
+            _messageId := keccak256(ptr, 0x40)
+            mstore(0x40, add(ptr, 0x40))
+        }
         if (idle >= assets) {
             reservedAssets += assets;
             if (_allSpokesFresh()) {

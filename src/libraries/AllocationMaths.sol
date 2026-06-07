@@ -43,7 +43,7 @@ library AllocationMaths {
             if (chainTotal > 8000) return false;
             grandTotal += chainTotal;
         }
-        if (grandTotal == 10000) {
+        if (grandTotal != 10000) {
             return false;
         } else {
             return true;
@@ -52,14 +52,28 @@ library AllocationMaths {
 
     function shouldRebalance(
         uint256 currentWeightedApy,
-        uint256 optimialWeightedApy
+        uint256 optimalWeightedApy
     ) internal pure returns (bool) {
-        if (currentWeightedApy <= optimialWeightedApy) return false;
-        uint256 result = optimialWeightedApy - currentWeightedApy;
+        if (currentWeightedApy <= optimalWeightedApy) return false;
+        uint256 result = optimalWeightedApy - currentWeightedApy;
         if (result >= 50) {
             return true;
         } else {
             return false;
         }
+    }
+
+    function validateSingleMove(
+        uint256[][] memory allocations,
+        uint256 totalAssets
+    ) internal pure returns (bool) {
+        uint256 maxMove = (totalAssets * 3_000) / 10_000; // 30%
+        for (uint256 i = 0; i < allocations.length; i++) {
+            for (uint256 j = 0; j < allocations[i].length; j++) {
+                uint256 amount = (allocations[i][j] * totalAssets) / 10_000;
+                if (amount > maxMove) return false;
+            }
+        }
+        return true;
     }
 }

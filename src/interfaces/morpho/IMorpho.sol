@@ -42,22 +42,13 @@ interface IMorpho {
         address receiver
     ) external returns (uint256 assetsWithdrawn, uint256 sharesWithdrawn);
 
-    function position(
-        Id id,
-        address user
-    ) external view returns (Position memory p);
+    function position(Id id, address user) external view returns (Position memory p);
 
     function market(Id id) external view returns (Market memory m);
 }
 
 interface IIrm {
-    function borrowRate(
-        MarketParams memory marketParams,
-        Market memory market
-    ) external returns (uint256);
+    function borrowRate(MarketParams memory marketParams, Market memory market) external returns (uint256);
 
-    function borrowRateView(
-        MarketParams memory marketParams,
-        Market memory market
-    ) external view returns (uint256);
+    function borrowRateView(MarketParams memory marketParams, Market memory market) external view returns (uint256);
 }

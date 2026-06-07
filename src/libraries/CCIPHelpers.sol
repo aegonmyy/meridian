@@ -24,15 +24,11 @@ library CCIPHelpers {
         bytes32 messageId;
     }
 
-    function encode(
-        CcipMessage memory _message
-    ) internal pure returns (bytes memory) {
+    function encode(CcipMessage memory _message) internal pure returns (bytes memory) {
         return abi.encode(_message);
     }
 
-    function decode(
-        bytes memory _encodedMessage
-    ) internal pure returns (CcipMessage memory) {
+    function decode(bytes memory _encodedMessage) internal pure returns (CcipMessage memory) {
         return abi.decode(_encodedMessage, (CcipMessage));
     }
 }

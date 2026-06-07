@@ -22,9 +22,7 @@ contract AaveAdapter is IYieldSource {
     /// @param _aToken Interest-bearing token for `_asset`.
     /// @param _asset Underlying ERC20 asset.
     constructor(address _aave, address _aToken, address _asset) {
-        if (
-            _aave == address(0) || _aToken == address(0) || _asset == address(0)
-        ) {
+        if (_aave == address(0) || _aToken == address(0) || _asset == address(0)) {
             revert ZeroAddress();
         }
         AAVE = IPool(_aave);
@@ -41,11 +39,7 @@ contract AaveAdapter is IYieldSource {
 
     /// @inheritdoc IYieldSource
     function withdraw(uint256 _amount) external {
-        uint256 withdrawn = AAVE.withdraw(
-            address(ASSET),
-            _amount,
-            address(this)
-        );
+        uint256 withdrawn = AAVE.withdraw(address(ASSET), _amount, address(this));
         ASSET.safeTransfer(msg.sender, withdrawn);
     }
 

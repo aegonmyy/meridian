@@ -38,23 +38,15 @@ contract morphoAdapter is IYieldSource {
         uint256 _lltv
     ) {
         if (
-            _asset == address(0) ||
-            _morpho == address(0) ||
-            _loanToken == address(0) ||
-            _collateralToken == address(0) ||
-            _oracle == address(0) ||
-            _irm == address(0)
+            _asset == address(0) || _morpho == address(0) || _loanToken == address(0) || _collateralToken == address(0)
+                || _oracle == address(0) || _irm == address(0)
         ) {
             revert ZeroAddress();
         }
         ASSET = IERC20(_asset);
         MORPHO = IMorpho(_morpho);
         marketparams = MarketParams({
-            loanToken: _loanToken,
-            collateralToken: _collateralToken,
-            oracle: _oracle,
-            irm: _irm,
-            lltv: _lltv
+            loanToken: _loanToken, collateralToken: _collateralToken, oracle: _oracle, irm: _irm, lltv: _lltv
         });
         ASSET.forceApprove(_morpho, type(uint256).max);
     }
@@ -69,13 +61,7 @@ contract morphoAdapter is IYieldSource {
     /// @inheritdoc IYieldSource
     function withdraw(uint256 _amount) external {
         MarketParams memory params = marketparams;
-        (uint256 assetsWithdrawn, ) = MORPHO.withdraw(
-            params,
-            _amount,
-            0,
-            address(this),
-            address(this)
-        );
+        (uint256 assetsWithdrawn,) = MORPHO.withdraw(params, _amount, 0, address(this), address(this));
         ASSET.safeTransfer(msg.sender, assetsWithdrawn);
     }
 
@@ -89,10 +75,6 @@ contract morphoAdapter is IYieldSource {
         Market memory market = MORPHO.market(marketId);
         if (market.totalSupplyShares == 0) return 0;
 
-        return
-            position.supplyShares.mulDivDown(
-                market.totalSupplyAssets,
-                market.totalSupplyShares
-            );
+        return position.supplyShares.mulDivDown(market.totalSupplyAssets, market.totalSupplyShares);
     }
 }

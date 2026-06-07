@@ -30,6 +30,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         address owner;
         bool idleBacked;
     }
+
     /// @notice Stores spoke address and registration status per chain
     /// @dev exists flag is source of truth — used to skip inactive spokes during iteration
     struct SpokeInfo {
@@ -84,27 +85,14 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @param shares Amount of shares locked
     /// @param assets Amount of assets owed
     /// @param idleBacked Whether idle balance is reserved for this withdrawal
-    event WithdrawalQueued(
-        address indexed owner,
-        uint256 shares,
-        uint256 assets,
-        bool idleBacked
-    );
+    event WithdrawalQueued(address indexed owner, uint256 shares, uint256 assets, bool idleBacked);
 
     /// @notice Emitted when a queued withdrawal is completed
     /// @param owner Address whose shares were burned
     /// @param receiver Address that received the USDC
     /// @param assets Amount of USDC transferred
-    event WithdrawalProcessed(
-        address indexed owner,
-        address indexed receiver,
-        uint256 assets,
-        bytes32 messageId
-    );
-    event SpokeAdded(
-        uint64 indexed spokeSelector,
-        address indexed spokeAddress
-    );
+    event WithdrawalProcessed(address indexed owner, address indexed receiver, uint256 assets, bytes32 messageId);
+    event SpokeAdded(uint64 indexed spokeSelector, address indexed spokeAddress);
 
     /// @notice Emitted when spoke balance is updated from an incoming CCIP message
     /// @param chainSelector Chain selector of the reporting spoke
@@ -157,8 +145,9 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     }
 
     function _onlyRebalancer() internal view {
-        if (msg.sender != REBALANCER && msg.sender != address(this))
+        if (msg.sender != REBALANCER && msg.sender != address(this)) {
             revert NotRebalancer();
+        }
     }
 
     /// @notice Deploys HubVault with immutable configuration
@@ -179,18 +168,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         address _link,
         address _asset,
         address _rebalancer
-    )
-        ERC4626(IERC20(_asset))
-        Ownable(_owner)
-        ERC20(_name, _symbol)
-        CCIPReceiver(_router)
-    {
+    ) ERC4626(IERC20(_asset)) Ownable(_owner) ERC20(_name, _symbol) CCIPReceiver(_router) {
         if (
-            _router == address(0) ||
-            _owner == address(0) ||
-            _link == address(0) ||
-            _asset == address(0) ||
-            _rebalancer == address(0)
+            _router == address(0) || _owner == address(0) || _link == address(0) || _asset == address(0)
+                || _rebalancer == address(0)
         ) revert InvalidConstructorArguments();
         LINK = IERC20(_link);
         REBALANCER = _rebalancer;
@@ -200,10 +181,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @dev If spoke already exists, updates address without pushing to array again.
     /// @param _chainSelector CCIP chain selector for the spoke chain
     /// @param _spokeAddress Address of the SpokeVault on that chain
-    function addSpoke(
-        uint64 _chainSelector,
-        address _spokeAddress
-    ) external onlyOwner {
+    function addSpoke(uint64 _chainSelector, address _spokeAddress) external onlyOwner {
         if (_spokeAddress == address(0)) revert ZeroAddress();
         if (spokes[_chainSelector].exists) {
             spokes[_chainSelector].spoke = _spokeAddress;
@@ -232,10 +210,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @dev Only callable by Rebalancer. Builds DEPOSIT message and delegates to _sendToSpoke.
     /// @param _chainSelector CCIP chain selector of the destination spoke
     /// @param _instructions Array of adapter instructions — adapter id and amount per market
-    function sendToSpoke(
-        uint64 _chainSelector,
-        CCIPHelpers.AdapterInstructions[] memory _instructions
-    ) external onlyRebalancer {
+    function sendToSpoke(uint64 _chainSelector, CCIPHelpers.AdapterInstructions[] memory _instructions)
+        external
+        onlyRebalancer
+    {
         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
         bytes32 _messageId;
         uint256 _amount = _instructions[0].amount;
@@ -265,7 +243,9 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.AdapterInstructions[] memory _instructions,
         bytes32 _messageId
     ) external onlyRebalancer {
-        if (!spokes[_chainSelector].exists) revert SpokeNotFound();
+        if (!spokes[_chainSelector].exists) {
+            revert SpokeNotFound();
+        }
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.WITHDRAW_AMOUNT,
             instructions: _instructions,
@@ -283,12 +263,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @param receiver Address receiving the shares
     /// @param assets Amount of USDC being deposited
     /// @param shares Amount of shares being minted
-    function _deposit(
-        address caller,
-        address receiver,
-        uint256 assets,
-        uint256 shares
-    ) internal override {
+    function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
         totalPrincipal += assets;
         super._deposit(caller, receiver, assets, shares);
     }
@@ -303,13 +278,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @param owner Address whose shares are being burned
     /// @param assets Amount of USDC to send
     /// @param shares Amount of shares to burn
-    function _withdraw(
-        address caller,
-        address receiver,
-        address owner,
-        uint256 assets,
-        uint256 shares
-    ) internal override {
+    function _withdraw(address caller, address receiver, address owner, uint256 assets, uint256 shares)
+        internal
+        override
+    {
         if (caller != owner) {
             _spendAllowance(owner, caller, shares);
         }
@@ -327,14 +299,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         if (idle >= assets) {
             reservedAssets += assets;
             if (_allSpokesFresh()) {
-                _processWithdrawal(
-                    owner,
-                    receiver,
-                    shares,
-                    assets,
-                    true,
-                    _messageId
-                );
+                _processWithdrawal(owner, receiver, shares, assets, true, _messageId);
             } else {
                 pendingWithdrawals[_messageId] = PendingWithdrawal({
                     owner: owner,
@@ -357,12 +322,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
                 idleBacked: false
             });
             uint64 _chainSelector = _findBestSpoke();
-            CCIPHelpers.AdapterInstructions[]
-                memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
-            _instructions[0] = CCIPHelpers.AdapterInstructions({
-                adapter: bytes32(0),
-                amount: assets
-            });
+            CCIPHelpers.AdapterInstructions[] memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+            _instructions[0] = CCIPHelpers.AdapterInstructions({adapter: bytes32(0), amount: assets});
             this.recallFromSpoke(_chainSelector, _instructions, _messageId);
             emit WithdrawalQueued(owner, shares, assets, false);
         }
@@ -398,10 +359,9 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     function _requestAllBalanceReports(bytes32 _messageId) internal {
         uint64[] memory selectors = spokeChainSelectors;
 
-        for (uint i = 0; i < selectors.length; i++) {
+        for (uint256 i = 0; i < selectors.length; i++) {
             if (!spokes[selectors[i]].exists) continue;
-            CCIPHelpers.AdapterInstructions[]
-                memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
+            CCIPHelpers.AdapterInstructions[] memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
             CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
                 messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
                 instructions: _instructions,
@@ -437,10 +397,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     ///      Fees paid in LINK — contract must hold sufficient LINK balance.
     /// @param _chainSelector Destination chain selector
     /// @param _message Encoded CcipMessage containing type, instructions, and spoke balance
-    function _sendToSpoke(
-        uint64 _chainSelector,
-        CCIPHelpers.CcipMessage memory _message
-    ) internal {
+    function _sendToSpoke(uint64 _chainSelector, CCIPHelpers.CcipMessage memory _message) internal {
         uint256 size;
         uint256 totalAmount;
         for (uint256 i = 0; i < _message.instructions.length; i++) {
@@ -449,25 +406,16 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         if (totalAmount > 0) {
             size = 1;
         }
-        Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](size);
+        Client.EVMTokenAmount[] memory tokenAmount = new Client.EVMTokenAmount[](size);
         if (size == 1) {
-            tokenAmount[0] = Client.EVMTokenAmount({
-                token: address(asset()),
-                amount: totalAmount
-            });
+            tokenAmount[0] = Client.EVMTokenAmount({token: address(asset()), amount: totalAmount});
         }
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(spokes[_chainSelector].spoke),
             data: CCIPHelpers.encode(_message),
             tokenAmounts: tokenAmount,
             feeToken: address(LINK),
-            extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
-                    allowOutOfOrderExecution: false
-                })
-            )
+            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV2({gasLimit: 200_000, allowOutOfOrderExecution: false}))
         });
         IRouterClient router = IRouterClient(getRouter());
         uint256 fee = router.getFee(_chainSelector, ccipMessage);
@@ -510,27 +458,18 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @dev Validates message origin — only registered spoke addresses accepted.
     ///      Routes CONFIRM_RECEIPT and REPORT_BALANCE to their respective handlers.
     /// @param message Incoming CCIP message struct delivered by the router
-    function _ccipReceive(
-        Client.Any2EVMMessage memory message
-    ) internal override {
-        if (!isValidSpoke[abi.decode(message.sender, (address))])
+    function _ccipReceive(Client.Any2EVMMessage memory message) internal override {
+        if (!isValidSpoke[abi.decode(message.sender, (address))]) {
             revert NotSpoke();
-        CCIPHelpers.CcipMessage memory _message = CCIPHelpers.decode(
-            message.data
-        );
+        }
+        CCIPHelpers.CcipMessage memory _message = CCIPHelpers.decode(message.data);
         uint64 _chainSelector = message.sourceChainSelector;
         uint256 _amountArrived = _message.instructions[0].amount;
-        if (
-            _message.messageType == CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL
-        ) {
+        if (_message.messageType == CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL) {
             _handleWithdrawalCallback(_message, _chainSelector, _amountArrived);
-        } else if (
-            _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
-        ) {
+        } else if (_message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE) {
             _handleReportBalanceCallback(_message, _chainSelector);
-        } else if (
-            _message.messageType == CCIPHelpers.MessageType.CONFIRM_RECEIPT
-        ) {
+        } else if (_message.messageType == CCIPHelpers.MessageType.CONFIRM_RECEIPT) {
             _handleDepositCallback(_message, _chainSelector);
         } else {
             revert InvalidMessageType();
@@ -553,20 +492,14 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         if (selectors.length == 0) return false;
         for (uint256 i = 0; i < selectors.length; i++) {
             if (spokes[selectors[i]].exists == false) continue;
-            if (
-                block.timestamp - lastReportTimestamp[selectors[i]] >
-                MAX_STALENESS
-            ) {
+            if (block.timestamp - lastReportTimestamp[selectors[i]] > MAX_STALENESS) {
                 return false;
             }
         }
         return true;
     }
 
-    function _handleDepositCallback(
-        CCIPHelpers.CcipMessage memory _message,
-        uint64 _chainSelector
-    ) internal {
+    function _handleDepositCallback(CCIPHelpers.CcipMessage memory _message, uint64 _chainSelector) internal {
         spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
         inTransitAssets -= inTransitAmount[_message.messageId];
@@ -574,10 +507,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
     }
 
-    function _handleReportBalanceCallback(
-        CCIPHelpers.CcipMessage memory _message,
-        uint64 _chainSelector
-    ) internal {
+    function _handleReportBalanceCallback(CCIPHelpers.CcipMessage memory _message, uint64 _chainSelector) internal {
         bytes32 _messageId = _message.messageId;
         spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;

@@ -12,16 +12,10 @@ contract IHub {
 
     function removeSpoke(uint64 _chainSelector) external {}
 
-    function sendToSpoke(
-        uint64 _chainSelector,
-        AdapterInstructions[] memory _instructions
-    ) external {}
+    function sendToSpoke(uint64 _chainSelector, AdapterInstructions[] memory _instructions) external {}
 
-    function recallFromSpoke(
-        uint64 _chainSelector,
-        AdapterInstructions[] memory _instructions,
-        bytes32 _messageId
-    ) external {}
+    function recallFromSpoke(uint64 _chainSelector, AdapterInstructions[] memory _instructions, bytes32 _messageId)
+        external {}
 
     function totalAssets() public view returns (uint256) {}
 }

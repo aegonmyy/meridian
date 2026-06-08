@@ -9,10 +9,7 @@ interface IHub {
 
     function removeSpoke(uint64 _chainSelector) external;
 
-    function sendToSpoke(
-        uint64 _chainSelector,
-        CCIPHelpers.AdapterInstructions[] memory _instructions
-    ) external;
+    function sendToSpoke(uint64 _chainSelector, CCIPHelpers.AdapterInstructions[] memory _instructions) external;
 
     function recallFromSpoke(
         uint64 _chainSelector,

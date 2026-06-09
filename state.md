@@ -285,3 +285,142 @@ Shares only ever burned when funds are confirmed available. No scenario where sh
 totalManagedAssets = idleBalance + spokeBalances + inTransitAssets
 ```
 These three are mutually exclusive — capital is either sitting idle on the hub, deployed on a spoke, or in CCIP transit. No overlap, no double counting. `totalPrincipal` is NOT included in this sum — it would cause double counting since principal is already represented across the three buckets above.
+
+**Critical: Concurrent withdrawal race condition — idle balance over-promising**
+Without reservation, two users requesting withdrawals simultaneously could both be told "idle covers this" when only one can actually be paid.
+
+Example:
+- Hub idle = 10 USDC
+- User A requests 8 → idle check passes → queued
+- User B requests 9 → idle check passes → queued
+- Total promised = 17, available = 10 → one will fail
+
+Fix: introduce `reservedAssets` state variable. When a withdrawal is queued and idle covers it, immediately reserve that amount:
+```solidity
+reservedAssets += assets;
+```
+
+Available idle check becomes:
+```solidity
+uint256 availableIdle = _idleBalance() - reservedAssets;
+```
+
+On withdrawal completion, release the reservation:
+```solidity
+reservedAssets -= assets;
+```
+
+This prevents over-promising idle balance to concurrent withdrawers. Without this, the protocol could queue more idle-backed withdrawals than it can actually fulfill.
+
+**Architecture: Hub sends amount, spoke decides withdrawal source**
+Initial design had hub specifying exact adapter instructions for withdrawals. Problem: hub doesn't know per-adapter balances on spokes — only total spoke balance. Hub can't safely build adapter-specific withdrawal instructions without risking pulling from an adapter that doesn't have enough.
+
+Fix: new `WITHDRAW_AMOUNT` message type. Hub sends total amount needed, spoke executes greedy withdrawal across adapters:
+```
+need 500 USDC
+Aave balance = 300 → withdraw 300, still need 200
+Compound balance = 400 → withdraw 200, done
+```
+
+Spoke loops active adapters, withdraws greedily until amount is covered. Hub never needs to know adapter internals — clean separation of concerns.
+
+This simplifies `recallFromSpoke` on hub:
+```solidity
+function recallFromSpoke(uint64 chainSelector, uint256 amount) external onlyRebalancer
+```
+
+No adapter instructions — just chain selector and amount. Spoke handles the rest.
+
+`recallFromSpoke` still uses `AdapterInstruction[]` for explicit rebalance withdrawals where the Rebalancer knows exactly which adapter to pull from. `WITHDRAW_AMOUNT` is specifically for user withdrawal recalls where the hub just needs funds back.
+
+**`WITHDRAW` vs `WITHDRAW_AMOUNT` — two distinct message types for two distinct use cases**
+
+`WITHDRAW` — Rebalancer initiated. Carries explicit `AdapterInstruction[]` specifying exact adapter and amount. Used when rebalancing capital between markets — e.g. "pull 300 USDC from Aave Arbitrum specifically to redeploy into Morpho Base." Rebalancer knows where capital is because it put it there. Precise, intentional.
+
+`WITHDRAW_AMOUNT` — User withdrawal initiated. Carries only a total amount. No adapter specified. Used when hub needs funds back to pay a withdrawing user and doesn't care which adapter they come from. Spoke executes greedy withdrawal across active adapters until amount is covered.
+
+Why both are necessary:
+- Rebalancer needs adapter-level precision to execute allocation changes correctly
+- User withdrawal path has no adapter-level information at the hub — only total spoke balances are tracked
+- Collapsing both into one message type would either force the hub to guess adapter sources (unsafe) or force the Rebalancer to lose precision (suboptimal)
+
+The distinction cleanly maps to the separation of concerns — Rebalancer owns allocation decisions, hub owns user-facing accounting.
+
+**`WITHDRAW_AMOUNT` — proportional withdrawal across adapters, not greedy**
+Initial approach was greedy — deplete one adapter before touching the next. Rejected in favour of proportional withdrawal to preserve allocation balance.
+
+Greedy problem: after a user withdrawal, one adapter could be fully depleted while others are untouched. This creates an unbalanced state that forces an unnecessary rebalance cycle.
+
+Proportional approach: each adapter contributes its fair share based on its weight in the total spoke balance:
+```
+pullAmount[i] = requestedAmount * adapterBalance[i] / totalSpokeBalance
+```
+
+This preserves relative allocation ratios across adapters after every withdrawal — the Rebalancer doesn't need to immediately correct the spoke's internal balance.
+
+**Rounding handling:**
+Solidity truncates division. Summing individual proportional pulls produces dust shortfall. Fix: last active adapter receives the remainder (`requestedAmount - totalPulled`) instead of the formula result. This guarantees exactly `requestedAmount` is returned with no dust left in adapters.
+
+**Implementation pattern:**
+Two passes — first pass identifies the last active adapter index, second pass executes proportional withdrawals switching to remainder logic at the last adapter.
+
+**Spoke balance staleness — report timestamp vs arrival timestamp**
+Initial design used arrival time (`block.timestamp` on hub when message received) as `lastReportTimestamp`. This is inaccurate — a report generated 20 mins ago on the spoke arrives at the hub already 20 mins old. Using arrival time understates true staleness.
+
+Fix: spoke includes `reportTimestamp = block.timestamp` in every `CONFIRM_RECEIPT` and `REPORT_BALANCE` message. Hub stores `lastReportTimestamp[chainSelector] = decoded.reportTimestamp` — true age from when the spoke generated the report.
+
+Staleness check `block.timestamp - lastReportTimestamp > MAX_STALENESS` now measures real report age not arrival age.
+
+`MAX_STALENESS = 1 hour` is kept — a report generated on the spoke is considered fresh for 1 hour from generation. Given CCIP takes ~20 mins one way, a report arrives with ~40 mins of freshness remaining. Sufficient window for withdrawal processing.
+
+`CCIPMessage` struct updated to include `uint256 reportTimestamp` field. Spoke populates it, hub reads it.
+
+**Cross-chain timestamp drift — acceptable for staleness window**
+`block.timestamp` is not synchronized across EVM chains — each chain's timestamp is set independently by block proposers. In practice Ethereum, Arbitrum, Base, and Optimism timestamps drift by at most ~5 minutes relative to each other.
+
+For Meridian's `MAX_STALENESS = 1 hour` window, a 5 minute drift is a ~8% error — acceptable. Would become a concern if `MAX_STALENESS` were set below ~15 minutes. No fix needed for v1.
+
+**`WITHDRAW` message type — intra-spoke rebalancing only**
+`WITHDRAW` with explicit adapter instructions is used exclusively for intra-spoke rebalancing — moving capital between adapters on the same chain without crossing back to the hub.
+
+Example: Move from Aave Arbitrum → Morpho Arbitrum
+- Hub sends WITHDRAW to Arbitrum spoke with source and target adapter
+- Spoke withdraws from Aave, deposits into Morpho in same transaction
+- No tokens leave the chain — spoke sends CONFIRM_RECEIPT back with updated balance
+- No token transfer in CCIP message back to hub
+
+`WITHDRAW_AMOUNT` is for cross-chain user withdrawal recalls — tokens physically travel back to hub.
+
+`AdapterInstruction` updated to include `targetAdapter` field:
+- `targetAdapter` non-zero → intra-spoke rebalance, no tokens sent back
+- `targetAdapter` zero → cross-chain withdrawal, tokens sent back to hub
+
+This distinction eliminates unnecessary cross-chain hops for same-chain rebalances — cheaper, faster, no CCIP latency for intra-spoke moves.
+
+**`inTransitAssets` accounting — precise decrement via `transitAmounts` mapping**
+When hub sends USDC to a spoke via CCIP, `inTransitAssets` is incremented by the exact amount sent. When `CONFIRM_RECEIPT` arrives 20 mins later the hub needs to know exactly how much to decrement — it can't use `spokeBalance` from the message because that includes yield on top of the deposited amount.
+
+Fix: `transitAmounts` mapping stores the exact amount sent per messageId:
+```solidity
+mapping(bytes32 => uint256) public transitAmounts;
+```
+
+On send: `transitAmounts[messageId] = totalAmount`
+On confirmation: `inTransitAssets -= transitAmounts[messageId]`, then delete entry
+
+**Full deposit accounting flow with numbers:**
+
+Before deposit:
+- idle = 1000, inTransitAssets = 0, spokeBalances[Arbitrum] = 500
+- totalAssets = 1500
+
+Hub sends 200 USDC to Arbitrum:
+- idle = 800, inTransitAssets = 200, spokeBalances[Arbitrum] = 500
+- totalAssets = 800 + 200 + 500 = 1500 ✅ no phantom drop during transit
+
+CONFIRM_RECEIPT arrives — spoke reports spokeBalance = 705 (500 existing + 200 arrived + 5 yield accrued during transit):
+- inTransitAssets -= 200 → 0
+- spokeBalances[Arbitrum] = 705
+- totalAssets = 800 + 0 + 705 = 1505 ✅
+
+The 5 USDC yield accrued during the 20 min transit window correctly appears in totalAssets. No double counting — capital is tracked in inTransitAssets during transit and in spokeBalances after confirmation. Never in both simultaneously.

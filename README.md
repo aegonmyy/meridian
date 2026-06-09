@@ -1,4 +1,4 @@
-Meridian's findings doc at [findings.md](findings.md) documents every architectural 
+Meridian's doc at [state.md](state.md) documents every architectural 
 decision made during development including tradeoffs I reversed 
 after reasoning them through.
 

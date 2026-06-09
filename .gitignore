@@ -14,3 +14,5 @@ lib/
 # Dotenv file
 .env
 doc.md
+src/tempCodeRunnerFile.js
+src/res.json

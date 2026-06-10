@@ -2,5 +2,7 @@
     "name": "meridian",
     "version": "1.0.0",
     "type": "module",
-    "dependencies": {}
+    "dependencies": {
+        "dotenv": "^17.4.2"
+    }
 }

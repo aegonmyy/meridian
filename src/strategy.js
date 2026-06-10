@@ -1,4 +1,6 @@
 import { ethers } from "ethers";
+import dotenv from 'dotenv';
+dotenv.config();
 
 const MARKETS = {
     arbitrum: { aavePoolAddress: "0x794a61358D6845594F94dc1DB02A252b5b4814aD", chainId: 42161, USDC_ADDRESS: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", comet: "0xAec1F48e02Cfb822Be958B68C7957156EB3F0b6e", rpc: "https://ethereum-sepolia-rpc.publicnode.com", chainlinkRouter: "", chainSelector: "" },
@@ -61,8 +63,7 @@ async function fetchCompoundRates(market) {
 
     const compound = new ethers.Contract(market.comet, ABI, provider)
     const rawRate = await compound.getSupplyRate(await compound.getUtilization());
-    // console.log(await _getGasCostUsd(provider))
-    // return Math.round(Number(rawRate) / 1e18 * 31_536_000 * 10_000)
+
 }
 
 async function getTotalGas(market) {
@@ -99,6 +100,45 @@ async function _getUsdValue(raw) {
     })
     return (await etherPrice.json()).ethereum.usd * raw
 }
-// fetchAaveRates(MARKETS.arbitrum)
-// fetchMorphoRates(MARKETS.arbitrum)
-// fetchCompoundRates(MARKETS.arbitrum)
+
+async function getGeminiAllocation(markets) {
+    const message = []
+    const systemPrompt = ""
+
+    for (let i = 0; i < markets.length; i++) {
+        message.push(`${markets[i].protocol} on ${markets[i].chain} with BPS of ${markets[i].netApy}`)
+    }
+    const userMessage = message.join("\n")
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": process.env.GEMINI_API_KEY
+        },
+        body: JSON.stringify({
+            contents: [
+                { role: "user", parts: [{ text: userMessage }] }
+            ],
+            systemInstruction: { parts: [{ text: "be helpful" }] },
+            generationConfig: { responseMimeType: "application/json" }
+        })
+    })
+    const data = await response.json()
+    const content = data.candidates[0].content.parts[0].text
+    console.log(content)
+    return JSON.parse(content)
+}
+fetchAaveRates(MARKETS.arbitrum)
+fetchMorphoRates(MARKETS.arbitrum)
+fetchCompoundRates(MARKETS.arbitrum)
+const markets = [
+    { chain: "arbitrum", protocol: "aave", netApy: 450 },
+    { chain: "arbitrum", protocol: "compound", netApy: 380 },
+    { chain: "arbitrum", protocol: "morpho", netApy: 420 },
+    { chain: "base", protocol: "aave", netApy: 410 },
+    { chain: "base", protocol: "compound", netApy: 395 },
+    { chain: "base", protocol: "morpho", netApy: 430 },
+    { chain: "optimism", protocol: "aave", netApy: 360 },
+    { chain: "optimism", protocol: "compound", netApy: 340 },
+]
+getGeminiAllocation(markets)

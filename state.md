@@ -424,3 +424,42 @@ CONFIRM_RECEIPT arrives — spoke reports spokeBalance = 705 (500 existing + 200
 - totalAssets = 800 + 0 + 705 = 1505 ✅
 
 The 5 USDC yield accrued during the 20 min transit window correctly appears in totalAssets. No double counting — capital is tracked in inTransitAssets during transit and in spokeBalances after confirmation. Never in both simultaneously.
+
+Agent Strategy — Deterministic Optimiser with AI Risk Gate
+Two approaches considered for allocation decisions:
+Option 1 — LLM decides allocation directly
+Pass market data and constraints to DeepSeek, let it return an allocation. Rejected — LLMs don't guarantee hard numerical constraints are respected. Sum equalling exactly 10,000 bps, min/max per market, chain concentration limits — all of these require validation anyway. An invalid allocation from the model means a fallback is needed, which means the math exists regardless. Adding an LLM in the critical path introduces a failure point with no benefit over pure math for a deterministic optimisation problem.
+Option 2 — Greedy optimiser with AI risk gate (chosen)
+Two separate concerns handled by the right tool for each:
+
+Allocation — greedy sort by net APY, fill from top respecting constraints. Deterministic, auditable, guaranteed valid output, no external dependency in the critical path.
+Risk assessment — DeepSeek reviews market data before optimiser runs. Can veto markets showing anomalous APY, negative protocol news, or exploit signals. Vetoed markets are zeroed out before the optimiser sees them.
+
+Why this separation matters: allocation math has a provably correct answer given the constraints. Risk judgment — "does a 2979% APY signal an exploit or a liquidity imbalance?" — is exactly what a language model is strong at. Each tool does what it is good at.
+Failure mode: if DeepSeek is unavailable, the risk gate can be skipped and the optimiser runs on unvetted data. Acceptable for v1 — the on-chain guards in Rebalancer.sol are the last line of defence regardless.
+
+Agent Strategy — Revised: AI Allocation with Deterministic Fallback and Validation
+Initial decision was deterministic greedy optimiser with AI risk gate. Revised after reasoning through soft diversification requirements.
+Why the revision:
+Pure APY maximisation is a clean math problem. But Meridian's goal is risk-adjusted yield with soft diversification — "prefer spreading across chains, split between markets within 100 bps of each other, activate at least one market per chain where viable." These are judgment calls, not hard constraints. Encoding them as math produces complex brittle branching logic. This is exactly where a language model reasons naturally.
+Final architecture:
+
+Fetch live APYs — Aave, Compound, Morpho across all chains
+Calculate net APY per market after annualised gas and bridge costs
+DeepSeek receives net APYs + hard constraints + diversification preferences → returns allocation in JSON
+Validate output against hard constraints — sum equals 10000, per market max 6000, per chain max 8000, min 500 per active market
+If DeepSeek output is invalid or unavailable → fallback to greedy math optimiser
+Encode valid allocation as AllocationProposal and return
+
+Separation of concerns:
+
+DeepSeek — allocation decisions including soft diversification judgment
+Math validator — enforces hard on-chain constraints, catches invalid AI output
+Greedy fallback — deterministic safety net if AI is unavailable or returns garbage
+On-chain Rebalancer guards — final defence, validates again before execution
+
+Diversification rules passed to DeepSeek:
+
+Prefer at least one active market per chain if net APY is positive
+Split between markets within 100 bps of each other rather than concentrating
+Hard constraints are non-negotiable — AI output rejected if they are violated

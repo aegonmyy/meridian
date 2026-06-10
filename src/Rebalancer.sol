@@ -48,19 +48,59 @@ contract Rebalancer {
         owner = _owner;
     }
 
-    function proposeAllocation(AllocationProposal memory proposal) external onlyAuthorized {
+    function rebalance(
+        bytes32 _source,
+        bytes32 _target,
+        uint256 _amount,
+        uint64 _chainSelector
+    ) external onlyAuthorized {
         if (block.timestamp - lastRebalanceTimestamp < COOLDOWN) {
             revert CooldownNotElapsed();
         }
-        bool valid = AllocationMaths.validateAllocation(proposal.proposedAllocations);
-        if (!valid) revert InvalidAllocation();
-        uint256 currentWeightedApy =
-            AllocationMaths.weightedApy(_flatten(proposal.currentAllocations), proposal.currentNetApys);
-        uint256 optimalWeightedApy =
-            AllocationMaths.weightedApy(_flatten(proposal.proposedAllocations), proposal.proposedNetApys);
-        bool rebalance = AllocationMaths.shouldRebalance(currentWeightedApy, optimalWeightedApy);
+        CCIPHelpers.AdapterInstructions[]
+            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+        _instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: _source,
+            amount: _amount,
+            targetAdapter: _target,
+            targetAmount: 0
+        });
+        bytes32 _messageId;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, _target)
+            mstore(add(ptr, 0x20), timestamp())
+            _messageId := keccak256(ptr, 0x40)
+            mstore(0x40, add(ptr, 0x40))
+        }
 
-        if (!rebalance) revert BelowThreshold();
+        HUB.rebalance(_chainSelector, _instructions, _messageId);
+    }
+
+    function proposeAllocation(
+        AllocationProposal memory proposal
+    ) external onlyAuthorized {
+        if (block.timestamp - lastRebalanceTimestamp < COOLDOWN) {
+            revert CooldownNotElapsed();
+        }
+        bool valid = AllocationMaths.validateAllocation(
+            proposal.proposedAllocations
+        );
+        if (!valid) revert InvalidAllocation();
+        uint256 currentWeightedApy = AllocationMaths.weightedApy(
+            _flatten(proposal.currentAllocations),
+            proposal.currentNetApys
+        );
+        uint256 optimalWeightedApy = AllocationMaths.weightedApy(
+            _flatten(proposal.proposedAllocations),
+            proposal.proposedNetApys
+        );
+        bool _rebalance = AllocationMaths.shouldRebalance(
+            currentWeightedApy,
+            optimalWeightedApy
+        );
+
+        if (!_rebalance) revert BelowThreshold();
 
         for (uint256 i = 0; i < proposal.chainSelectors.length; i++) {
             if (whitelistedChains[proposal.chainSelectors[i]] == false) {
@@ -73,40 +113,60 @@ contract Rebalancer {
             }
         }
         uint256 totalAssets = HUB.totalAssets();
-        if (!AllocationMaths.validateSingleMove(proposal.proposedAllocations, totalAssets)) {
+        if (
+            !AllocationMaths.validateSingleMove(
+                proposal.proposedAllocations,
+                totalAssets
+            )
+        ) {
             revert MaxSingleMoveExceeded();
         }
 
         lastRebalanceTimestamp = block.timestamp;
         for (uint256 i = 0; i < proposal.protocolIds.length; i++) {
-            CCIPHelpers.AdapterInstructions[] memory _instructions =
-                new CCIPHelpers.AdapterInstructions[](proposal.protocolIds.length);
+            CCIPHelpers.AdapterInstructions[]
+                memory _instructions = new CCIPHelpers.AdapterInstructions[](
+                    proposal.protocolIds.length
+                );
             for (uint256 j = 0; i < proposal.protocolIds[i].length; j++) {
                 _instructions[i] = CCIPHelpers.AdapterInstructions({
-                    adapter: proposal.protocolIds[i][j], amount: proposal.proposedAllocations[i][j]
+                    adapter: proposal.protocolIds[i][j],
+                    amount: proposal.proposedAllocations[i][j],
+                    targetAdapter: bytes32(0),
+                    targetAmount: 0
                 });
             }
             HUB.sendToSpoke(proposal.chainSelectors[i], _instructions);
         }
     }
 
-    function addChainToWhitelist(uint64 _chainSelector) external onlyAuthorized {
+    function addChainToWhitelist(
+        uint64 _chainSelector
+    ) external onlyAuthorized {
         whitelistedChains[_chainSelector] = true;
     }
 
-    function removeChainFromWhitelist(uint64 _chainSelector) external onlyAuthorized {
+    function removeChainFromWhitelist(
+        uint64 _chainSelector
+    ) external onlyAuthorized {
         whitelistedChains[_chainSelector] = false;
     }
 
-    function addProtocolToWhitelist(bytes32 _protocolId) external onlyAuthorized {
+    function addProtocolToWhitelist(
+        bytes32 _protocolId
+    ) external onlyAuthorized {
         whitelistedProtocols[_protocolId] = true;
     }
 
-    function removeProtocolFromWhitelist(bytes32 _protocolId) external onlyAuthorized {
+    function removeProtocolFromWhitelist(
+        bytes32 _protocolId
+    ) external onlyAuthorized {
         whitelistedProtocols[_protocolId] = false;
     }
 
-    function _flatten(uint256[][] memory arr) internal pure returns (uint256[] memory) {
+    function _flatten(
+        uint256[][] memory arr
+    ) internal pure returns (uint256[] memory) {
         uint256 total;
         for (uint256 i = 0; i < arr.length; i++) {
             total += arr[i].length;

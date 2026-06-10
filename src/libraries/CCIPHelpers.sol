@@ -4,7 +4,7 @@ pragma solidity ^0.8.33;
 library CCIPHelpers {
     enum MessageType {
         DEPOSIT,
-        WITHDRAW,
+        REBALANCE,
         REPORT_BALANCE,
         WITHDRAW_AMOUNT,
         CONFIRM_RECEIPT,
@@ -14,6 +14,8 @@ library CCIPHelpers {
     struct AdapterInstructions {
         bytes32 adapter;
         uint256 amount;
+        bytes32 targetAdapter;
+        uint256 targetAmount;
     }
 
     struct CcipMessage {
@@ -24,11 +26,15 @@ library CCIPHelpers {
         bytes32 messageId;
     }
 
-    function encode(CcipMessage memory _message) internal pure returns (bytes memory) {
+    function encode(
+        CcipMessage memory _message
+    ) internal pure returns (bytes memory) {
         return abi.encode(_message);
     }
 
-    function decode(bytes memory _encodedMessage) internal pure returns (CcipMessage memory) {
+    function decode(
+        bytes memory _encodedMessage
+    ) internal pure returns (CcipMessage memory) {
         return abi.decode(_encodedMessage, (CcipMessage));
     }
 }

@@ -9,7 +9,10 @@ interface IHub {
 
     function removeSpoke(uint64 _chainSelector) external;
 
-    function sendToSpoke(uint64 _chainSelector, CCIPHelpers.AdapterInstructions[] memory _instructions) external;
+    function sendToSpoke(
+        uint64 _chainSelector,
+        CCIPHelpers.AdapterInstructions[] memory _instructions
+    ) external;
 
     function recallFromSpoke(
         uint64 _chainSelector,
@@ -18,4 +21,10 @@ interface IHub {
     ) external;
 
     function totalAssets() external view returns (uint256);
+
+    function rebalance(
+        uint64 _chainSelector,
+        CCIPHelpers.AdapterInstructions[] memory _instructions,
+        bytes32 _messageId
+    ) external;
 }

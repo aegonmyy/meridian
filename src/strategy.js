@@ -119,7 +119,7 @@ async function getGeminiAllocation(markets) {
             contents: [
                 { role: "user", parts: [{ text: userMessage }] }
             ],
-            systemInstruction: { parts: [{ text: "be helpful" }] },
+            systemInstruction: { parts: [{ text: systemPrompt }] },
             generationConfig: { responseMimeType: "application/json" }
         })
     })
@@ -128,9 +128,9 @@ async function getGeminiAllocation(markets) {
     console.log(content)
     return JSON.parse(content)
 }
-fetchAaveRates(MARKETS.arbitrum)
-fetchMorphoRates(MARKETS.arbitrum)
-fetchCompoundRates(MARKETS.arbitrum)
+// fetchAaveRates(MARKETS.arbitrum)
+// fetchMorphoRates(MARKETS.arbitrum)
+// fetchCompoundRates(MARKETS.arbitrum)
 const markets = [
     { chain: "arbitrum", protocol: "aave", netApy: 450 },
     { chain: "arbitrum", protocol: "compound", netApy: 380 },

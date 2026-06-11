@@ -8,7 +8,8 @@ library CCIPHelpers {
         REPORT_BALANCE,
         WITHDRAW_AMOUNT,
         CONFIRM_RECEIPT,
-        CONFIRM_WITHDRAWAL
+        CONFIRM_WITHDRAWAL,
+        CONFIRM_REBALANCE
     }
 
     struct AdapterInstructions {

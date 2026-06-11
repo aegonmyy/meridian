@@ -557,6 +557,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             _message.messageType == CCIPHelpers.MessageType.CONFIRM_RECEIPT
         ) {
             _handleDepositCallback(_message, _chainSelector);
+        } else if (
+            _message.messageType == CCIPHelpers.MessageType.CONFIRM_REBALANCE
+        ) {
+            _handleRebalanceCallback(_message, _chainSelector);
         } else {
             revert InvalidMessageType();
         }
@@ -586,6 +590,15 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             }
         }
         return true;
+    }
+
+    function _handleRebalanceCallback(
+        CCIPHelpers.CcipMessage memory _message,
+        uint64 _chainSelector
+    ) internal {
+        spokeBalances[_chainSelector] = _message.spokeBalance;
+        lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
+        emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
     }
 
     function _handleDepositCallback(

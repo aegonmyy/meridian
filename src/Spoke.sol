@@ -287,6 +287,11 @@ contract SpokeVault is CCIPReceiver, Ownable {
                 _sourceAdapter.exists == false || _targetAdapter.exists == false
             ) revert AdapterNotFound();
             _sourceAdapter.adapter.withdraw(_message.instructions[i].amount);
+
+            ASSET.forceApprove(
+                address(_targetAdapter.adapter),
+                _message.instructions[i].amount
+            );
             _targetAdapter.adapter.deposit(_message.instructions[i].amount);
         }
         Client.EVMTokenAmount[]
@@ -303,7 +308,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
                 CCIPHelpers.CcipMessage({
-                    messageType: CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
+                    messageType: CCIPHelpers.MessageType.CONFIRM_REBALANCE,
                     instructions: _instructions,
                     spokeBalance: _aggregatedSpokeBalance(),
                     reportTimestamp: block.timestamp,

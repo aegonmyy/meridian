@@ -57,6 +57,11 @@ contract Rebalancer {
         if (block.timestamp - lastRebalanceTimestamp < COOLDOWN) {
             revert CooldownNotElapsed();
         }
+        if (!whitelistedChains[_chainSelector]) revert ChainNotWhitelisted();
+        if (
+            whitelistedProtocols[_target] == false ||
+            whitelistedProtocols[_source] == false
+        ) revert ProtocolNotWhitelisted();
         CCIPHelpers.AdapterInstructions[]
             memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
         _instructions[0] = CCIPHelpers.AdapterInstructions({

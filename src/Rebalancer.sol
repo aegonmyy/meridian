@@ -29,6 +29,8 @@ contract Rebalancer {
 
     error InvalidConstructorArguments();
     error NotAuthorized();
+    error SourceEqualsTarget();
+    error ZeroAmount();
     error CooldownNotElapsed();
     error BelowThreshold();
     error MaxSingleMoveExceeded();
@@ -57,6 +59,8 @@ contract Rebalancer {
         if (block.timestamp - lastRebalanceTimestamp < COOLDOWN) {
             revert CooldownNotElapsed();
         }
+        if (_source == _target) revert SourceEqualsTarget();
+        if (_amount == 0) revert ZeroAmount();
         if (!whitelistedChains[_chainSelector]) revert ChainNotWhitelisted();
         if (
             whitelistedProtocols[_target] == false ||
@@ -131,10 +135,10 @@ contract Rebalancer {
         for (uint256 i = 0; i < proposal.protocolIds.length; i++) {
             CCIPHelpers.AdapterInstructions[]
                 memory _instructions = new CCIPHelpers.AdapterInstructions[](
-                    proposal.protocolIds.length
+                    proposal.protocolIds[i].length
                 );
-            for (uint256 j = 0; i < proposal.protocolIds[i].length; j++) {
-                _instructions[i] = CCIPHelpers.AdapterInstructions({
+            for (uint256 j = 0; j < proposal.protocolIds[i].length; j++) {
+                _instructions[j] = CCIPHelpers.AdapterInstructions({
                     adapter: proposal.protocolIds[i][j],
                     amount: proposal.proposedAllocations[i][j],
                     targetAdapter: bytes32(0),

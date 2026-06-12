@@ -36,17 +36,32 @@ contract AgentConsumer is FunctionsClient, Ownable {
     function requestRebalance() external {
         FunctionsRequest.Request memory req;
         FunctionsRequest._initializeRequest(
-            req, FunctionsRequest.Location.Remote, FunctionsRequest.CodeLanguage.JavaScript, sourceCodeCid
+            req,
+            FunctionsRequest.Location.Remote,
+            FunctionsRequest.CodeLanguage.JavaScript,
+            sourceCodeCid
         );
-        lastRequestId = _sendRequest(FunctionsRequest._encodeCBOR(req), subscriptionId, callbackGasLimit, donId);
+        lastRequestId = _sendRequest(
+            FunctionsRequest._encodeCBOR(req),
+            subscriptionId,
+            callbackGasLimit,
+            donId
+        );
     }
 
-    function _fulfillRequest(bytes32 requestId, bytes memory response, bytes memory err) internal override {
+    function _fulfillRequest(
+        bytes32 requestId,
+        bytes memory response,
+        bytes memory err
+    ) internal override {
         if (requestId != lastRequestId) revert NotValidRequestId(requestId);
         if (err.length > 0) {
             emit Error(err);
         }
-        AllocationProposal memory proposal = abi.decode(response, (AllocationProposal));
+        AllocationProposal memory proposal = abi.decode(
+            response,
+            (AllocationProposal)
+        );
         REBALANCER.proposeAllocation(proposal);
     }
 

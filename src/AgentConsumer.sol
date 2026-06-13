@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.33;
 
-import {FunctionsClient} from "@chainlink/functions/v1_3_0/FunctionsClient.sol";
-import {FunctionsRequest} from "@chainlink/functions/dev/v1_X/libraries/FunctionsRequest.sol";
+import {FunctionsClient} from "@chainlink+/functions/v1_3_0/FunctionsClient.sol";
+import {FunctionsRequest} from "@chainlink+/functions/dev/v1_X/libraries/FunctionsRequest.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {AllocationProposal, IRebalancer} from "./interfaces/IRebalancer.sol";
 

@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.33;
 
-import {CCIPReceiver} from "@chainlink/ccip/applications/CCIPReceiver.sol";
-import {Client} from "@chainlink/ccip/libraries/Client.sol";
-import {IRouterClient} from "@chainlink/ccip/interfaces/IRouterClient.sol";
+import {CCIPReceiver} from "@chainlink+/ccip/applications/CCIPReceiver.sol";
+import {Client} from "@chainlink+/ccip/libraries/Client.sol";
+import {IRouterClient} from "@chainlink+/ccip/interfaces/IRouterClient.sol";
 import {CCIPHelpers} from "./libraries/CCIPHelpers.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound} from "./errors/hubErrors.sol";
 
 /// @title HubVault
 /// @notice ERC4626 vault on Ethereum — entry point for all user deposits and withdrawals
@@ -113,42 +114,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     event SpokeBalanceUpdated(uint64 indexed chainSelector, uint256 balance);
 
     event SpokeRemoved(uint64 indexed spokeSelector);
-
-    /// @notice Thrown when no active spokes are registered
-    error NoActiveSpokes();
-
-    /// @notice Thrown when user already has a pending withdrawal
-    error WithdrawalAlreadyPending();
-
-    /// @notice Thrown when a CCIP message contains an unrecognised message type
-    error InvalidMessageType();
-
-    /// @notice Thrown when no pending withdrawal exists for this address
-    error NoPendingWithdrawal();
-
-    /// @notice Thrown when a constructor argument is zero address
-    error InvalidConstructorArguments();
-
-    /// @notice Thrown when caller is not the Rebalancer
-    error NotRebalancer();
-
-    /// @notice Thrown when a CCIP message originates from an unregistered spoke
-    error NotSpoke();
-
-    /// @notice Thrown when a zero address is provided where not allowed
-    error ZeroAddress();
-
-    /// @notice Thrown when withdrawal amount exceeds available assets
-    error InsufficientAssets();
-
-    /// @notice Thrown when spoke is already registered
-    error SpokeAlreadyRegistered();
-
-    /// @notice Thrown when spoke is not registered
-    error SpokeNotFound();
-
-    ///@notice Thrown when provided spoke already exists
-    error SpokeExists();
 
     /// @notice Restricts access to the Rebalancer contract or the hub itself
     /// @dev Hub calls recallFromSpoke internally for user withdrawal path

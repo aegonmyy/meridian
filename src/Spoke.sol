@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
-import {CCIPReceiver} from "@chainlink/ccip/applications/CCIPReceiver.sol";
-import {Client} from "@chainlink/ccip/libraries/Client.sol";
-import {IRouterClient} from "@chainlink/ccip/interfaces/IRouterClient.sol";
+import {CCIPReceiver} from "@chainlink+/ccip/applications/CCIPReceiver.sol";
+import {Client} from "@chainlink+/ccip/libraries/Client.sol";
+import {IRouterClient} from "@chainlink+/ccip/interfaces/IRouterClient.sol";
 import {CCIPHelpers} from "./libraries/CCIPHelpers.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IYieldSource} from "./interfaces/IYieldSource.sol";
+import {ZeroAddress, NotHub, AdapterNotFound, InvalidMessageType, AmountCannotBeZero, InvalidConstructorArguments} from "./errors/spokeErrors.sol";
 
 /// @title SpokeVault
 /// @notice Receives CCIP messages from the hub and manages capital deployment into yield protocols
@@ -77,31 +78,6 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @notice Emitted when an adapter is disabled
     /// @param protocolId The bytes32 identifier for the protocol
     event AdapterRemoved(bytes32 indexed protocolId);
-
-    // =========================================================================
-    // Errors
-    // =========================================================================
-
-    ///@notice Thrown when no active adapter is found
-    error NoActiveAdapters();
-
-    /// @notice Thrown when a zero address is provided where not allowed
-    error ZeroAddress();
-
-    /// @notice Thrown when a CCIP message originates from an address other than the hub
-    error NotHub();
-
-    /// @notice Thrown when attempting to interact with an adapter that is not registered or has been removed
-    error AdapterNotFound();
-
-    /// @notice Thrown when a CCIP message contains an unrecognised message type
-    error InvalidMessageType();
-
-    /// @notice Thrown when a deposit or withdrawal amount of zero is received
-    error AmountCannotBeZero();
-
-    ///@notice Thrown when any of the constructor argument is invalid
-    error InvalidConstructorArguments();
 
     // =========================================================================
     // Constructor
@@ -463,5 +439,9 @@ contract SpokeVault is CCIPReceiver, Ownable {
             });
         }
         return balances;
+    }
+
+    function activeAdaptersLength() external view returns (uint256) {
+        return activeAdapters.length;
     }
 }

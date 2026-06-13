@@ -8,7 +8,7 @@ import {IYieldSource} from "../../src/interfaces/IYieldSource.sol";
 import {CCIPLocalSimulator, IRouterClient, LinkToken} from "chainlink-local/ccip/CCIPLocalSimulator.sol";
 import {Asset} from "../mocks/Asset.sol";
 import {MockYieldSource} from "../mocks/mockYield.sol";
-import {ZeroAddress} from "../../src/errors/spokeErrors.sol";
+import {ZeroAddress, AdapterNotFound} from "../../src/errors/spokeErrors.sol";
 
 contract spokeTest is Test {
     CCIPLocalSimulator public ccipSimulator;
@@ -85,7 +85,7 @@ contract spokeTest is Test {
     function test_setAdapter_newAdapter() public {
         vm.prank(owner);
         spoke.setAdapter(AAVE, address(aaveAdapter));
-        (IYieldSource adapter, bool exists) = spoke.adapters(AAVE);
+        (IYieldSource adapter, bool exists, ) = spoke.adapters(AAVE);
         assertTrue(exists);
         assertEq(address(adapter), address(aaveAdapter));
         assertTrue(_isInActiveAdapters(AAVE));
@@ -105,7 +105,7 @@ contract spokeTest is Test {
         MockYieldSource newAave = new MockYieldSource(address(usdc));
         vm.prank(owner);
         spoke.setAdapter(AAVE, address(newAave));
-        (IYieldSource adapter, bool exists) = spoke.adapters(AAVE);
+        (IYieldSource adapter, bool exists, ) = spoke.adapters(AAVE);
         assertTrue(exists);
         assertEq(address(adapter), address(newAave));
         assertEq(spoke.activeAdaptersLength(), 1); // no duplicate
@@ -117,8 +117,20 @@ contract spokeTest is Test {
         MockYieldSource newAave = new MockYieldSource(address(usdc));
         vm.prank(owner);
         spoke.setAdapter(AAVE, address(newAave));
-        (IYieldSource adapter, ) = spoke.adapters(AAVE);
+        (IYieldSource adapter, , ) = spoke.adapters(AAVE);
         assertNotEq(address(adapter), address(aaveAdapter));
+    }
+
+    function test_setAdapter_afterRemove_noDuplicate() public {
+        vm.startPrank(owner);
+        spoke.setAdapter(AAVE, address(aaveAdapter));
+        spoke.removeAdapter(AAVE);
+        spoke.setAdapter(AAVE, address(compoundAdapter)); // re-register
+        vm.stopPrank();
+        assertEq(spoke.activeAdaptersLength(), 1); // no duplicate
+        assertTrue(_isInActiveAdapters(AAVE));
+        (, bool exists, ) = spoke.adapters(AAVE);
+        assertTrue(exists);
     }
 
     function test_setAdapter_multipleAdapters() public {
@@ -143,6 +155,91 @@ contract spokeTest is Test {
         vm.prank(attacker);
         vm.expectRevert();
         spoke.setAdapter(AAVE, address(aaveAdapter));
+    }
+
+    // =========================================================================
+    // removeAdapter Tests
+    // =========================================================================
+    function test_removeAdapter_setsExistsFalse() public {
+        vm.startPrank(owner);
+        spoke.setAdapter(AAVE, address(aaveAdapter));
+        spoke.removeAdapter(AAVE);
+        vm.stopPrank();
+        (, bool exists, ) = spoke.adapters(AAVE);
+        assertFalse(exists);
+    }
+
+    function test_removeAdapter_zerosAdapterAddress() public {
+        vm.startPrank(owner);
+        spoke.setAdapter(AAVE, address(aaveAdapter));
+        spoke.removeAdapter(AAVE);
+        vm.stopPrank();
+        (IYieldSource adapter, , ) = spoke.adapters(AAVE);
+        assertEq(address(adapter), address(0));
+    }
+
+    function test_removeAdapter_emitsEvent() public {
+        vm.prank(owner);
+        spoke.setAdapter(AAVE, address(aaveAdapter));
+        vm.expectEmit(true, false, false, false);
+        emit SpokeVault.AdapterRemoved(AAVE);
+        vm.prank(owner);
+        spoke.removeAdapter(AAVE);
+    }
+
+    function test_removeAdapter_arrayLengthUnchanged() public {
+        vm.startPrank(owner);
+        spoke.setAdapter(AAVE, address(aaveAdapter));
+        spoke.setAdapter(COMPOUND, address(compoundAdapter));
+        uint256 lengthBefore = spoke.activeAdaptersLength();
+        spoke.removeAdapter(AAVE);
+        vm.stopPrank();
+        assertEq(spoke.activeAdaptersLength(), lengthBefore);
+    }
+
+    function test_removeAdapter_revert_notExists() public {
+        vm.prank(owner);
+        vm.expectRevert(AdapterNotFound.selector);
+        spoke.removeAdapter(AAVE);
+    }
+
+    function test_removeAdapter_revert_alreadyRemoved() public {
+        vm.startPrank(owner);
+        spoke.setAdapter(AAVE, address(aaveAdapter));
+        spoke.removeAdapter(AAVE);
+        vm.expectRevert(AdapterNotFound.selector);
+        spoke.removeAdapter(AAVE);
+        vm.stopPrank();
+    }
+
+    function test_removeAdapter_revert_notOwner() public {
+        vm.prank(owner);
+        spoke.setAdapter(AAVE, address(aaveAdapter));
+        vm.prank(attacker);
+        vm.expectRevert();
+        spoke.removeAdapter(AAVE);
+    }
+
+    function test_removeAdapter_reAdd_existsAgain() public {
+        vm.startPrank(owner);
+        spoke.setAdapter(AAVE, address(aaveAdapter));
+        spoke.removeAdapter(AAVE);
+        spoke.setAdapter(AAVE, address(compoundAdapter));
+        vm.stopPrank();
+        (, bool exists, ) = spoke.adapters(AAVE);
+        assertTrue(exists);
+        assertEq(spoke.activeAdaptersLength(), 1); // no duplicate
+    }
+
+    function test_removeAdapter_othersUnaffected() public {
+        vm.startPrank(owner);
+        spoke.setAdapter(AAVE, address(aaveAdapter));
+        spoke.setAdapter(COMPOUND, address(compoundAdapter));
+        spoke.removeAdapter(AAVE);
+        vm.stopPrank();
+        (, bool compoundExists, ) = spoke.adapters(COMPOUND);
+        assertTrue(compoundExists);
+        assertTrue(_isInActiveAdapters(COMPOUND));
     }
 
     /// @dev Returns true if protocolId is present in activeAdapters array

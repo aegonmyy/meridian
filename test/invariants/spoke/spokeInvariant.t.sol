@@ -74,7 +74,7 @@ contract SpokeVaultInvariant is StdInvariant, Test {
         uint256 length = spoke.activeAdaptersLength();
         for (uint256 i = 0; i < length; i++) {
             bytes32 id = spoke.activeAdapters(i);
-            (IYieldSource adapter, bool exists) = spoke.adapters(id);
+            (IYieldSource adapter, bool exists, ) = spoke.adapters(id);
             if (exists) {
                 assertNotEq(
                     address(adapter),
@@ -90,7 +90,7 @@ contract SpokeVaultInvariant is StdInvariant, Test {
         uint256 handlerLength = handler.registeredIdsLength();
         for (uint256 i = 0; i < handlerLength; i++) {
             bytes32 id = handler.registeredIds(i);
-            (, bool exists) = spoke.adapters(id);
+            (, bool exists, ) = spoke.adapters(id);
             if (exists) {
                 assertTrue(
                     _isInActiveAdapters(id),
@@ -103,6 +103,55 @@ contract SpokeVaultInvariant is StdInvariant, Test {
     /// @dev activeAdapters length never exceeds number of unique ids registered
     function invariant_lengthNeverExceedsUniqueIds() public view {
         assertLe(spoke.activeAdaptersLength(), handler.registeredIdsLength());
+    }
+
+    // @dev removeAdapter never shrinks activeAdapters array
+    function invariant_removeNeverShrinksArray() public view {
+        assertEq(
+            spoke.activeAdaptersLength(),
+            handler.ghostActiveAdaptersLength()
+        );
+    }
+
+    /// @dev everRegistered is never false after first setAdapter
+    function invariant_everRegisteredNeverResets() public view {
+        uint256 length = handler.registeredIdsLength();
+        for (uint256 i = 0; i < length; i++) {
+            bytes32 id = handler.registeredIds(i);
+            (, , bool everRegistered) = spoke.adapters(id);
+            assertTrue(everRegistered, "everRegistered was reset");
+        }
+    }
+
+    /// @dev after removeAdapter exists is false but everRegistered stays true
+    function invariant_removeOnlyFlipsExists() public view {
+        uint256 length = handler.registeredIdsLength();
+        for (uint256 i = 0; i < length; i++) {
+            bytes32 id = handler.registeredIds(i);
+            (, bool exists, bool everRegistered) = spoke.adapters(id);
+            if (!exists) {
+                assertTrue(
+                    everRegistered,
+                    "removed adapter lost everRegistered"
+                );
+            }
+        }
+    }
+
+    /// @dev removed adapter address is always zero
+    function invariant_removedAdapterAddressIsZero() public view {
+        uint256 length = handler.registeredIdsLength();
+        for (uint256 i = 0; i < length; i++) {
+            bytes32 id = handler.registeredIds(i);
+            (IYieldSource adapter, bool exists, ) = spoke.adapters(id);
+            if (!exists) {
+                assertEq(
+                    address(adapter),
+                    address(0),
+                    "removed adapter address not zero"
+                );
+            }
+        }
     }
 
     // =========================================================================

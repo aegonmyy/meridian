@@ -29,6 +29,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     struct AdapterInfo {
         IYieldSource adapter;
         bool exists;
+        bool everRegistered;
     }
 
     struct AdapterBalances {
@@ -129,12 +130,11 @@ contract SpokeVault is CCIPReceiver, Ownable {
         address _adapter
     ) external onlyOwner {
         if (_adapter == address(0)) revert ZeroAddress();
-        if (adapters[_protocolId].exists) {
-            adapters[_protocolId].adapter = IYieldSource(_adapter);
-            emit AdapterSet(_protocolId, _adapter);
-            return;
+        if (!adapters[_protocolId].everRegistered) {
+            activeAdapters.push(_protocolId);
+            adapters[_protocolId].everRegistered = true;
         }
-        activeAdapters.push(_protocolId);
+
         adapters[_protocolId].adapter = IYieldSource(_adapter);
         adapters[_protocolId].exists = true;
         emit AdapterSet(_protocolId, _adapter);

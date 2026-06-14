@@ -11,7 +11,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IYieldSource} from "./interfaces/IYieldSource.sol";
 import {ZeroAddress, NotHub, AdapterNotFound, InvalidMessageType, AmountCannotBeZero, InvalidConstructorArguments} from "./errors/spokeErrors.sol";
 
-/// @title SpokeVault
+/// @title spoke
 /// @notice Receives CCIP messages from the hub and manages capital deployment into yield protocols
 /// @dev Deployed on each L2 spoke chain (Arbitrum, Base, Optimism).
 ///      Only the HubVault on Ethereum can send instructions to this contract via CCIP.

@@ -10,7 +10,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound} from "./errors/hubErrors.sol";
+import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered} from "./errors/hubErrors.sol";
 
 /// @title HubVault
 /// @notice ERC4626 vault on Ethereum — entry point for all user deposits and withdrawals
@@ -37,6 +37,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     struct SpokeInfo {
         address spoke;
         bool exists;
+        bool everRegistered;
     }
     /// @notice LINK token address used to pay CCIP fees
     IERC20 public immutable LINK;
@@ -172,15 +173,23 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         address _spokeAddress
     ) external onlyOwner {
         if (_spokeAddress == address(0)) revert ZeroAddress();
-        if (spokes[_chainSelector].exists) {
-            spokes[_chainSelector].spoke = _spokeAddress;
+        if (
+            isValidSpoke[_spokeAddress] &&
+            spokes[_chainSelector].spoke != _spokeAddress
+        ) {
+            revert SpokeAlreadyRegistered();
+        }
+        if (!spokes[_chainSelector].everRegistered) {
+            // isValidSpoke[spokes[_chainSelector].spoke] = false;
+            spokeChainSelectors.push(_chainSelector);
+            spokes[_chainSelector].everRegistered = true;
             emit SpokeAdded(_chainSelector, _spokeAddress);
-            return;
+        } else {
+            isValidSpoke[spokes[_chainSelector].spoke] = false;
         }
         isValidSpoke[_spokeAddress] = true;
         spokes[_chainSelector].spoke = _spokeAddress;
         spokes[_chainSelector].exists = true;
-        spokeChainSelectors.push(_chainSelector);
         emit SpokeAdded(_chainSelector, _spokeAddress);
     }
 
@@ -619,5 +628,9 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             );
             delete pendingWithdrawals[_messageId];
         }
+    }
+
+    function spokeChainSelectorsLength() external view returns (uint256) {
+        return spokeChainSelectors.length;
     }
 }

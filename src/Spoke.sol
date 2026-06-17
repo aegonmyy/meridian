@@ -9,7 +9,14 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IYieldSource} from "./interfaces/IYieldSource.sol";
-import {ZeroAddress, NotHub, AdapterNotFound, InvalidMessageType, AmountCannotBeZero, InvalidConstructorArguments} from "./errors/spokeErrors.sol";
+import {
+    ZeroAddress,
+    NotHub,
+    AdapterNotFound,
+    InvalidMessageType,
+    AmountCannotBeZero,
+    InvalidConstructorArguments
+} from "./errors/spokeErrors.sol";
 
 /// @title spoke
 /// @notice Receives CCIP messages from the hub and manages capital deployment into yield protocols
@@ -94,20 +101,13 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @param _owner Address of the contract owner (should be a multisig before mainnet)
     /// @param _link Address of the LINK token on this chain
     /// @param _hubSelector Chainlink CCIP chain selector for Ethereum mainnet
-    constructor(
-        address _hub,
-        address _asset,
-        address _router,
-        address _owner,
-        address _link,
-        uint64 _hubSelector
-    ) CCIPReceiver(_router) Ownable(_owner) {
+    constructor(address _hub, address _asset, address _router, address _owner, address _link, uint64 _hubSelector)
+        CCIPReceiver(_router)
+        Ownable(_owner)
+    {
         if (
-            _hub == address(0) ||
-            _asset == address(0) ||
-            _router == address(0) ||
-            _link == address(0) ||
-            _hubSelector == 0
+            _hub == address(0) || _asset == address(0) || _router == address(0) || _link == address(0)
+                || _hubSelector == 0
         ) revert InvalidConstructorArguments();
         HUB = _hub;
         ASSET = IERC20(_asset);
@@ -125,10 +125,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      If registering for the first time, protocolId is added to activeAdapters.
     /// @param _protocolId Arbitrary bytes32 identifier for the protocol
     /// @param _adapter Address of the IYieldSource adapter contract
-    function setAdapter(
-        bytes32 _protocolId,
-        address _adapter
-    ) external onlyOwner {
+    function setAdapter(bytes32 _protocolId, address _adapter) external onlyOwner {
         if (_adapter == address(0)) revert ZeroAddress();
         if (!adapters[_protocolId].everRegistered) {
             activeAdapters.push(_protocolId);
@@ -162,25 +159,17 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      Hub origin check enforced here by decoding message.sender.
     ///      Decodes the custom payload via CCIPHelpers and routes to the correct handler.
     /// @param message The incoming CCIP message struct delivered by the router
-    function _ccipReceive(
-        Client.Any2EVMMessage memory message
-    ) internal override {
+    function _ccipReceive(Client.Any2EVMMessage memory message) internal override {
         if (abi.decode(message.sender, (address)) != HUB) revert NotHub();
-        CCIPHelpers.CcipMessage memory _message = CCIPHelpers.decode(
-            message.data
-        );
+        CCIPHelpers.CcipMessage memory _message = CCIPHelpers.decode(message.data);
 
         if (_message.messageType == CCIPHelpers.MessageType.DEPOSIT) {
             _handleDeposit(_message);
         } else if (_message.messageType == CCIPHelpers.MessageType.REBALANCE) {
             _handleRebalance(_message);
-        } else if (
-            _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
-        ) {
+        } else if (_message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE) {
             _reportBalance(_message);
-        } else if (
-            _message.messageType == CCIPHelpers.MessageType.WITHDRAW_AMOUNT
-        ) {
+        } else if (_message.messageType == CCIPHelpers.MessageType.WITHDRAW_AMOUNT) {
             _handleWithdrawalWithAmount(_message);
         } else {
             revert InvalidMessageType();
@@ -199,21 +188,14 @@ contract SpokeVault is CCIPReceiver, Ownable {
             if (_message.instructions[i].amount == 0) {
                 revert AmountCannotBeZero();
             }
-            AdapterInfo memory _adapter = adapters[
-                _message.instructions[i].adapter
-            ];
+            AdapterInfo memory _adapter = adapters[_message.instructions[i].adapter];
             if (!_adapter.exists) revert AdapterNotFound();
-            ASSET.forceApprove(
-                address(_adapter.adapter),
-                _message.instructions[i].amount
-            );
+            ASSET.forceApprove(address(_adapter.adapter), _message.instructions[i].amount);
             _adapter.adapter.deposit(_message.instructions[i].amount);
         }
-        Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](0);
+        Client.EVMTokenAmount[] memory tokenAmount = new Client.EVMTokenAmount[](0);
 
-        CCIPHelpers.AdapterInstructions[]
-            memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
+        CCIPHelpers.AdapterInstructions[] memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
             data: CCIPHelpers.encode(
@@ -227,12 +209,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
             ),
             tokenAmounts: tokenAmount,
             feeToken: address(LINK),
-            extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
-                    allowOutOfOrderExecution: false
-                })
-            )
+            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV2({gasLimit: 200_000, allowOutOfOrderExecution: false}))
         });
         IRouterClient router = IRouterClient(getRouter());
         uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
@@ -245,40 +222,24 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      Sends CONFIRM_RECEIPT message alongside the USDC so hub can decrement inTransitAssets.
     ///      LINK balance must be sufficient to cover the CCIP fee.
     /// @param _message The decoded CCIP message containing adapter id and amount
-    function _handleRebalance(
-        CCIPHelpers.CcipMessage memory _message
-    ) internal {
+    function _handleRebalance(CCIPHelpers.CcipMessage memory _message) internal {
         if (_message.instructions.length == 0) revert InvalidMessageType();
         for (uint256 i = 0; i < _message.instructions.length; i++) {
             if (_message.instructions[i].amount == 0) {
                 revert AmountCannotBeZero();
             }
-            AdapterInfo memory _sourceAdapter = adapters[
-                _message.instructions[i].adapter
-            ];
-            AdapterInfo memory _targetAdapter = adapters[
-                _message.instructions[i].targetAdapter
-            ];
-            if (
-                _sourceAdapter.exists == false || _targetAdapter.exists == false
-            ) revert AdapterNotFound();
+            AdapterInfo memory _sourceAdapter = adapters[_message.instructions[i].adapter];
+            AdapterInfo memory _targetAdapter = adapters[_message.instructions[i].targetAdapter];
+            if (_sourceAdapter.exists == false || _targetAdapter.exists == false) revert AdapterNotFound();
             _sourceAdapter.adapter.withdraw(_message.instructions[i].amount);
 
-            ASSET.forceApprove(
-                address(_targetAdapter.adapter),
-                _message.instructions[i].amount
-            );
+            ASSET.forceApprove(address(_targetAdapter.adapter), _message.instructions[i].amount);
             _targetAdapter.adapter.deposit(_message.instructions[i].amount);
         }
-        Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](0);
-        CCIPHelpers.AdapterInstructions[]
-            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+        Client.EVMTokenAmount[] memory tokenAmount = new Client.EVMTokenAmount[](0);
+        CCIPHelpers.AdapterInstructions[] memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
         _instructions[0] = CCIPHelpers.AdapterInstructions({
-            adapter: bytes32(0),
-            amount: 0,
-            targetAdapter: bytes32(0),
-            targetAmount: 0
+            adapter: bytes32(0), amount: 0, targetAdapter: bytes32(0), targetAmount: 0
         });
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
@@ -293,12 +254,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
             ),
             tokenAmounts: tokenAmount,
             feeToken: address(LINK),
-            extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
-                    allowOutOfOrderExecution: false
-                })
-            )
+            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV2({gasLimit: 200_000, allowOutOfOrderExecution: false}))
         });
         IRouterClient router = IRouterClient(getRouter());
         uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
@@ -306,9 +262,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
         router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
     }
 
-    function _handleWithdrawalWithAmount(
-        CCIPHelpers.CcipMessage memory _message
-    ) internal {
+    function _handleWithdrawalWithAmount(CCIPHelpers.CcipMessage memory _message) internal {
         if (_message.instructions.length == 0) revert InvalidMessageType();
         bytes32[] memory _adapters = activeAdapters;
         if (_adapters.length == 0) revert AdapterNotFound();
@@ -327,27 +281,16 @@ contract SpokeVault is CCIPReceiver, Ownable {
             if (i == _lastIndex) {
                 pullAmount = amountRequested - totalPulled;
             } else {
-                pullAmount =
-                    (amountRequested *
-                        adapters[_adapters[i]].adapter.totalAssets()) /
-                    _totalSpokeBalance;
+                pullAmount = (amountRequested * adapters[_adapters[i]].adapter.totalAssets()) / _totalSpokeBalance;
             }
             adapters[_adapters[i]].adapter.withdraw(pullAmount);
             totalPulled += pullAmount;
         }
-        Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](1);
-        tokenAmount[0] = Client.EVMTokenAmount({
-            token: address(ASSET),
-            amount: amountRequested
-        });
-        CCIPHelpers.AdapterInstructions[]
-            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+        Client.EVMTokenAmount[] memory tokenAmount = new Client.EVMTokenAmount[](1);
+        tokenAmount[0] = Client.EVMTokenAmount({token: address(ASSET), amount: amountRequested});
+        CCIPHelpers.AdapterInstructions[] memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
         _instructions[0] = CCIPHelpers.AdapterInstructions({
-            adapter: bytes32(0),
-            amount: amountRequested,
-            targetAdapter: bytes32(0),
-            targetAmount: 0
+            adapter: bytes32(0), amount: amountRequested, targetAdapter: bytes32(0), targetAmount: 0
         });
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
@@ -362,12 +305,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
             ),
             tokenAmounts: tokenAmount,
             feeToken: address(LINK),
-            extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
-                    allowOutOfOrderExecution: false
-                })
-            )
+            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV2({gasLimit: 200_000, allowOutOfOrderExecution: false}))
         });
         IRouterClient router = IRouterClient(getRouter());
         uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
@@ -381,10 +319,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      Sends results back to hub as a REPORT_BALANCE message.
     ///      LINK balance must be sufficient to cover the ccip fee.
     function _reportBalance(CCIPHelpers.CcipMessage memory _message) internal {
-        Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](0);
-        CCIPHelpers.AdapterInstructions[]
-            memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
+        Client.EVMTokenAmount[] memory tokenAmount = new Client.EVMTokenAmount[](0);
+        CCIPHelpers.AdapterInstructions[] memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
 
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(HUB),
@@ -399,12 +335,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
             ),
             tokenAmounts: tokenAmount,
             feeToken: address(LINK),
-            extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
-                    allowOutOfOrderExecution: false
-                })
-            )
+            extraArgs: Client._argsToBytes(Client.EVMExtraArgsV2({gasLimit: 200_000, allowOutOfOrderExecution: false}))
         });
         IRouterClient router = IRouterClient(getRouter());
         uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
@@ -419,9 +350,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
         uint256 aggregatedSpokeBalance;
         for (uint256 i = 0; i < _length; i++) {
             if (adapters[_activeAdapters[i]].exists == false) continue;
-            aggregatedSpokeBalance += adapters[_activeAdapters[i]]
-                .adapter
-                .totalAssets();
+            aggregatedSpokeBalance += adapters[_activeAdapters[i]].adapter.totalAssets();
         }
         return aggregatedSpokeBalance;
     }
@@ -431,11 +360,10 @@ contract SpokeVault is CCIPReceiver, Ownable {
         uint256 _length = _activeAdapters.length;
         AdapterBalances[] memory balances = new AdapterBalances[](_length);
         if (_length == 0) return balances;
-        for (uint i = 0; i < _length; i++) {
+        for (uint256 i = 0; i < _length; i++) {
             if (adapters[_activeAdapters[i]].exists == false) continue;
             balances[i] = AdapterBalances({
-                protocolId: _activeAdapters[i],
-                balance: adapters[_activeAdapters[i]].adapter.totalAssets()
+                protocolId: _activeAdapters[i], balance: adapters[_activeAdapters[i]].adapter.totalAssets()
             });
         }
         return balances;

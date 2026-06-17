@@ -50,7 +50,7 @@ contract spokeTest is Test {
 
         // CCIP local simulator
         ccipSimulator = new CCIPLocalSimulator();
-        (chainSelector, router, , , link, , ) = ccipSimulator.configuration();
+        (chainSelector, router,,, link,,) = ccipSimulator.configuration();
 
         // Deploy mock USDC
         usdc = new Asset();
@@ -64,14 +64,7 @@ contract spokeTest is Test {
 
         // Deploy SpokeVault
         vm.prank(owner);
-        spoke = new SpokeVault(
-            hub,
-            address(usdc),
-            address(router),
-            owner,
-            address(link),
-            HUB_CHAIN_SELECTOR
-        );
+        spoke = new SpokeVault(hub, address(usdc), address(router), owner, address(link), HUB_CHAIN_SELECTOR);
 
         // Fund spoke with LINK
         deal(address(link), address(spoke), 10 ether);
@@ -85,7 +78,7 @@ contract spokeTest is Test {
     function test_setAdapter_newAdapter() public {
         vm.prank(owner);
         spoke.setAdapter(AAVE, address(aaveAdapter));
-        (IYieldSource adapter, bool exists, ) = spoke.adapters(AAVE);
+        (IYieldSource adapter, bool exists,) = spoke.adapters(AAVE);
         assertTrue(exists);
         assertEq(address(adapter), address(aaveAdapter));
         assertTrue(_isInActiveAdapters(AAVE));
@@ -105,7 +98,7 @@ contract spokeTest is Test {
         MockYieldSource newAave = new MockYieldSource(address(usdc));
         vm.prank(owner);
         spoke.setAdapter(AAVE, address(newAave));
-        (IYieldSource adapter, bool exists, ) = spoke.adapters(AAVE);
+        (IYieldSource adapter, bool exists,) = spoke.adapters(AAVE);
         assertTrue(exists);
         assertEq(address(adapter), address(newAave));
         assertEq(spoke.activeAdaptersLength(), 1); // no duplicate
@@ -117,7 +110,7 @@ contract spokeTest is Test {
         MockYieldSource newAave = new MockYieldSource(address(usdc));
         vm.prank(owner);
         spoke.setAdapter(AAVE, address(newAave));
-        (IYieldSource adapter, , ) = spoke.adapters(AAVE);
+        (IYieldSource adapter,,) = spoke.adapters(AAVE);
         assertNotEq(address(adapter), address(aaveAdapter));
     }
 
@@ -129,7 +122,7 @@ contract spokeTest is Test {
         vm.stopPrank();
         assertEq(spoke.activeAdaptersLength(), 1); // no duplicate
         assertTrue(_isInActiveAdapters(AAVE));
-        (, bool exists, ) = spoke.adapters(AAVE);
+        (, bool exists,) = spoke.adapters(AAVE);
         assertTrue(exists);
     }
 
@@ -165,7 +158,7 @@ contract spokeTest is Test {
         spoke.setAdapter(AAVE, address(aaveAdapter));
         spoke.removeAdapter(AAVE);
         vm.stopPrank();
-        (, bool exists, ) = spoke.adapters(AAVE);
+        (, bool exists,) = spoke.adapters(AAVE);
         assertFalse(exists);
     }
 
@@ -174,7 +167,7 @@ contract spokeTest is Test {
         spoke.setAdapter(AAVE, address(aaveAdapter));
         spoke.removeAdapter(AAVE);
         vm.stopPrank();
-        (IYieldSource adapter, , ) = spoke.adapters(AAVE);
+        (IYieldSource adapter,,) = spoke.adapters(AAVE);
         assertEq(address(adapter), address(0));
     }
 
@@ -226,7 +219,7 @@ contract spokeTest is Test {
         spoke.removeAdapter(AAVE);
         spoke.setAdapter(AAVE, address(compoundAdapter));
         vm.stopPrank();
-        (, bool exists, ) = spoke.adapters(AAVE);
+        (, bool exists,) = spoke.adapters(AAVE);
         assertTrue(exists);
         assertEq(spoke.activeAdaptersLength(), 1); // no duplicate
     }
@@ -237,7 +230,7 @@ contract spokeTest is Test {
         spoke.setAdapter(COMPOUND, address(compoundAdapter));
         spoke.removeAdapter(AAVE);
         vm.stopPrank();
-        (, bool compoundExists, ) = spoke.adapters(COMPOUND);
+        (, bool compoundExists,) = spoke.adapters(COMPOUND);
         assertTrue(compoundExists);
         assertTrue(_isInActiveAdapters(COMPOUND));
     }

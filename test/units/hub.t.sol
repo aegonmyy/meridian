@@ -8,7 +8,7 @@ import {Asset} from "../mocks/Asset.sol";
 //import {MockYieldSource} from "../mocks/mockYield.sol";
 import {ZeroAddress, SpokeNotFound} from "../../src/errors/hubErrors.sol";
 
-contract HubVaultTest is Test {
+contract HUBTest is Test {
     CCIPLocalSimulator public ccipSimulator;
     IRouterClient public router;
     LinkToken public link;
@@ -72,6 +72,25 @@ contract HubVaultTest is Test {
         return false;
     }
 
+    function test_addSpoke_sequence() public {
+        address spokeD = address(0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF);
+        address spokeE = address(0x00000000000000000000000000000000000007e8);
+
+        vm.startPrank(owner);
+        hub.addSpoke(1, makeAddr("spokeA"));
+        hub.addSpoke(40526627, makeAddr("spokeB"));
+        hub.addSpoke(23804626, makeAddr("spokeC"));
+        hub.addSpoke(3600, spokeD);
+        hub.removeSpoke(3600);
+        hub.addSpoke(10000, spokeD);
+        hub.addSpoke(3600, spokeE);
+        vm.stopPrank();
+
+        // spokeD is registered under selector 10000 with exists = true
+        // isValidSpoke[spokeD] must be true
+        assertTrue(hub.isValidSpoke(spokeD), "spokeD should be valid");
+    }
+
     // =========================================================================
     // addSpoke Tests
     // =========================================================================
@@ -83,6 +102,7 @@ contract HubVaultTest is Test {
         (address spoke, bool exists, ) = hub.spokes(ARBITRUM_SELECTOR);
         assertTrue(exists);
         assertEq(spoke, arbitrumSpoke);
+        assertTrue(hub.isValidSpoke(arbitrumSpoke));
         assertTrue(_isInSpokeSelectors(ARBITRUM_SELECTOR));
         assertEq(hub.spokeChainSelectorsLength(), 1);
     }
@@ -106,6 +126,7 @@ contract HubVaultTest is Test {
         (address spoke, bool exists, ) = hub.spokes(ARBITRUM_SELECTOR);
         assertTrue(exists);
         assertEq(spoke, newSpoke);
+        assertTrue(hub.isValidSpoke(newSpoke));
         assertEq(hub.spokeChainSelectorsLength(), 1);
     }
 
@@ -116,6 +137,8 @@ contract HubVaultTest is Test {
         address newSpoke = makeAddr("newArbitrumSpoke");
         vm.prank(owner);
         hub.addSpoke(ARBITRUM_SELECTOR, newSpoke);
+
+        assertFalse(hub.isValidSpoke(arbitrumSpoke));
     }
 
     function test_addSpoke_multipleSpokes() public {
@@ -162,6 +185,8 @@ contract HubVaultTest is Test {
         hub.addSpoke(ARBITRUM_SELECTOR, arbitrumSpoke);
         hub.removeSpoke(ARBITRUM_SELECTOR);
         vm.stopPrank();
+
+        assertFalse(hub.isValidSpoke(arbitrumSpoke));
     }
 
     function test_removeSpoke_emitsEvent() public {
@@ -195,6 +220,7 @@ contract HubVaultTest is Test {
 
         (, bool baseExists, ) = hub.spokes(BASE_SELECTOR);
         assertTrue(baseExists);
+        assertTrue(hub.isValidSpoke(baseSpoke));
     }
 
     function test_removeSpoke_revert_notExists() public {
@@ -219,5 +245,84 @@ contract HubVaultTest is Test {
         vm.prank(attacker);
         vm.expectRevert();
         hub.removeSpoke(ARBITRUM_SELECTOR);
+    }
+
+    // =========================================================================
+    // Deposit Tests
+    // =========================================================================
+
+    function test_deposit_mintsShares() public {
+        uint256 assets = 1000e6;
+        vm.startPrank(alice);
+        usdc.approve(address(hub), assets);
+        uint256 shares = hub.deposit(assets, alice);
+        vm.stopPrank();
+
+        assertGt(shares, 0);
+        assertEq(hub.balanceOf(alice), shares);
+    }
+
+    function test_deposit_correctShareAmount() public {
+        uint256 assets = 1000e6;
+        uint256 expectedShares = hub.previewDeposit(assets);
+
+        vm.startPrank(alice);
+        usdc.approve(address(hub), assets);
+        uint256 actualShares = hub.deposit(assets, alice);
+        vm.stopPrank();
+
+        assertEq(actualShares, expectedShares);
+    }
+
+    function test_deposit_updatesTotalAssets() public {
+        uint256 assets = 1000e6;
+
+        vm.startPrank(alice);
+        usdc.approve(address(hub), assets);
+        hub.deposit(assets, alice);
+        vm.stopPrank();
+
+        assertEq(hub.totalAssets(), assets);
+    }
+
+    function test_deposit_transfersUSDC() public {
+        uint256 assets = 1000e6;
+        uint256 aliceBalanceBefore = usdc.balanceOf(alice);
+
+        vm.startPrank(alice);
+        usdc.approve(address(hub), assets);
+        hub.deposit(assets, alice);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), aliceBalanceBefore - assets);
+        assertEq(usdc.balanceOf(address(hub)), assets);
+    }
+
+    function test_deposit_multipleDepositors() public {
+        address bob = makeAddr("bob");
+        usdc.mint(bob, 10_000e6);
+
+        vm.startPrank(alice);
+        usdc.approve(address(hub), 1000e6);
+        hub.deposit(1000e6, alice);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        usdc.approve(address(hub), 2000e6);
+        hub.deposit(2000e6, bob);
+        vm.stopPrank();
+
+        assertEq(hub.totalAssets(), 3000e6);
+        assertGt(hub.balanceOf(alice), 0);
+        assertGt(hub.balanceOf(bob), 0);
+        assertGt(hub.balanceOf(bob), hub.balanceOf(alice)); // bob deposited more
+    }
+
+    function test_deposit_revert_insufficientAllowance() public {
+        vm.startPrank(alice);
+        // no approval
+        vm.expectRevert();
+        hub.deposit(1000e6, alice);
+        vm.stopPrank();
     }
 }

@@ -65,7 +65,9 @@ contract Rebalancer {
         if (
             whitelistedProtocols[_target] == false ||
             whitelistedProtocols[_source] == false
-        ) revert ProtocolNotWhitelisted();
+        ) {
+            revert ProtocolNotWhitelisted();
+        }
         CCIPHelpers.AdapterInstructions[]
             memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
         _instructions[0] = CCIPHelpers.AdapterInstructions({
@@ -143,7 +145,7 @@ contract Rebalancer {
                     amount: proposal.proposedAllocations[i][j],
                     targetAdapter: bytes32(0),
                     targetAmount: 0
-                });
+                }); //to fix, this is dynamic but send to spoke is fixed
             }
             HUB.sendToSpoke(proposal.chainSelectors[i], _instructions);
         }

@@ -56,8 +56,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @notice Maps chain selector to spoke vault address on that chain
     mapping(uint64 => SpokeInfo) public spokes;
 
-    ///@notice Sole purpose is to determine if a spoke is valid
-    mapping(address => bool) public isValidSpoke;
+    mapping(address => uint64) public addressToSelector;
 
     /// @notice Last reported total balance per spoke chain
     /// @dev Updated on every CONFIRM_RECEIPT and REPORT_BALANCE message from spokes
@@ -78,9 +77,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     uint256 public inTransitAssets;
 
     mapping(bytes32 => uint256) public inTransitAmount;
-
-    /// @notice Sum of all user deposits minus withdrawals — used as principal floor
-    uint256 public totalPrincipal;
 
     /// @notice Emitted when a withdrawal is queued pending spoke balance confirmation
     /// @param owner Address whose shares are locked
@@ -173,21 +169,21 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         address _spokeAddress
     ) external onlyOwner {
         if (_spokeAddress == address(0)) revert ZeroAddress();
-        if (
-            isValidSpoke[_spokeAddress] &&
-            spokes[_chainSelector].spoke != _spokeAddress
-        ) {
+        uint64 existingSelector = addressToSelector[_spokeAddress];
+        if (existingSelector != 0 && existingSelector != _chainSelector) {
             revert SpokeAlreadyRegistered();
         }
         if (!spokes[_chainSelector].everRegistered) {
-            // isValidSpoke[spokes[_chainSelector].spoke] = false;
             spokeChainSelectors.push(_chainSelector);
             spokes[_chainSelector].everRegistered = true;
-            emit SpokeAdded(_chainSelector, _spokeAddress);
+            addressToSelector[_spokeAddress] = _chainSelector;
         } else {
-            isValidSpoke[spokes[_chainSelector].spoke] = false;
+            address oldSpoke = spokes[_chainSelector].spoke;
+            if (addressToSelector[oldSpoke] == _chainSelector) {
+                delete addressToSelector[oldSpoke];
+            }
+            addressToSelector[_spokeAddress] = _chainSelector;
         }
-        isValidSpoke[_spokeAddress] = true;
         spokes[_chainSelector].spoke = _spokeAddress;
         spokes[_chainSelector].exists = true;
         emit SpokeAdded(_chainSelector, _spokeAddress);
@@ -199,9 +195,15 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @param _chainSelector CCIP chain selector of the spoke to disable
     function removeSpoke(uint64 _chainSelector) external onlyOwner {
         if (spokes[_chainSelector].exists == false) revert SpokeNotFound();
-        isValidSpoke[spokes[_chainSelector].spoke] = false;
+        delete addressToSelector[spokes[_chainSelector].spoke];
         spokes[_chainSelector].exists = false;
         emit SpokeRemoved(_chainSelector);
+    }
+
+    function isValidSpoke(address _spoke) public view returns (bool) {
+        uint64 selector = addressToSelector[_spoke];
+        if (selector == 0) return false;
+        return spokes[selector].exists && spokes[selector].spoke == _spoke;
     }
 
     /// @notice Sends USDC and deposit instructions to a spoke via CCIP
@@ -273,8 +275,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     }
 
     /// @notice Overrides ERC4626._deposit to track total principal
-    /// @dev Increments totalPrincipal before calling super — principal always
-    ///      reflects real deposited capital regardless of yield accrual.
     /// @param caller Address initiating the deposit
     /// @param receiver Address receiving the shares
     /// @param assets Amount of USDC being deposited
@@ -285,7 +285,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         uint256 assets,
         uint256 shares
     ) internal override {
-        totalPrincipal += assets;
         super._deposit(caller, receiver, assets, shares);
     }
 
@@ -381,7 +380,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         bool idleBacked,
         bytes32 _messageId
     ) internal {
-        totalPrincipal -= assets;
         if (idleBacked) {
             reservedAssets -= assets;
         }
@@ -462,7 +460,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             feeToken: address(LINK),
             extraArgs: Client._argsToBytes(
                 Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
+                    gasLimit: 500_000,
                     allowOutOfOrderExecution: false
                 })
             )
@@ -511,18 +509,17 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     function _ccipReceive(
         Client.Any2EVMMessage memory message
     ) internal override {
-        if (!isValidSpoke[abi.decode(message.sender, (address))]) {
+        if (!isValidSpoke(abi.decode(message.sender, (address)))) {
             revert NotSpoke();
         }
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.decode(
             message.data
         );
         uint64 _chainSelector = message.sourceChainSelector;
-        uint256 _amountArrived = _message.instructions[0].amount;
         if (
             _message.messageType == CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL
         ) {
-            _handleWithdrawalCallback(_message, _chainSelector, _amountArrived);
+            _handleWithdrawalCallback(_message, _chainSelector);
         } else if (
             _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
         ) {
@@ -609,14 +606,13 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
 
     function _handleWithdrawalCallback(
         CCIPHelpers.CcipMessage memory _message,
-        uint64 _chainSelector,
-        uint256 _amountArrived
+        uint64 _chainSelector
     ) internal {
         bytes32 _messageId = _message.messageId;
+        //uint256 _amountArrived = _message.instructions[0].amount;
         spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
         emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
-        totalPrincipal += _amountArrived;
         if (pendingWithdrawals[_messageId].shares > 0) {
             _processWithdrawal(
                 pendingWithdrawals[_messageId].owner,

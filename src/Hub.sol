@@ -391,7 +391,9 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @notice Sends REPORT_BALANCE messages to all active spokes
     /// @dev Called when withdrawal is queued and balances are stale (Path 2).
     ///      Balance updates arrive asynchronously via _ccipReceive.
-    function _requestAllBalanceReports(bytes32 _messageId) internal {
+    function _requestAllBalanceReports(
+        bytes32 _messageId
+    ) public onlyRebalancer {
         uint64[] memory selectors = spokeChainSelectors;
 
         for (uint256 i = 0; i < selectors.length; i++) {

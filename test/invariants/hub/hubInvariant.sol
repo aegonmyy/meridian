@@ -86,6 +86,29 @@ contract HubVaultInvariant is Test {
         );
     }
 
+    // @dev totalAssets never less than what users deposited minus withdrawn
+    // yield can only add so totalAssets >= net deposits
+    function invariant_totalAssetsGeNetDeposits() public view {
+        assertGe(
+            hub.totalAssets(),
+            handler.ghostTotalPrincipal() - handler.ghostTotalWithdrawn()
+        );
+    } //problem
+
+    /// @dev lastReportTimestamp never in the future
+    function invariant_reportTimestampNeverInFuture() public view {
+        uint256 length = hub.spokeChainSelectorsLength();
+        for (uint256 i = 0; i < length; i++) {
+            uint64 selector = hub.spokeChainSelectors(i);
+            assertLe(hub.lastReportTimestamp(selector), block.timestamp);
+        }
+    }
+
+    /// @dev inTransitAmount entries never exceed totalAssets
+    function invariant_inTransitAssetsBounded() public view {
+        assertLe(hub.inTransitAssets(), hub.totalAssets());
+    }
+
     /// @dev inTransitAssets never exceeds totalAssets
     function invariant_inTransitBounded() public view {
         assertLe(hub.inTransitAssets(), hub.totalAssets());

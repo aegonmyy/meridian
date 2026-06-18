@@ -5,16 +5,18 @@ pragma solidity ^0.8.33;
 error arrayOutOfBound();
 
 library AllocationMaths {
-    function netApy(uint256 _grossApy, uint256 _costs) internal pure returns (uint256 _netApy) {
+    function netApy(
+        uint256 _grossApy,
+        uint256 _costs
+    ) internal pure returns (uint256 _netApy) {
         _netApy = _grossApy - _costs;
         return _netApy;
     }
 
-    function weightedApy(uint256[] memory _allocations, uint256[] memory _netApYs)
-        internal
-        pure
-        returns (uint256 _weightedApy)
-    {
+    function weightedApy(
+        uint256[] memory _allocations,
+        uint256[] memory _netApYs
+    ) internal pure returns (uint256 _weightedApy) {
         if (_allocations.length != _netApYs.length) {
             revert arrayOutOfBound();
         }
@@ -26,7 +28,9 @@ library AllocationMaths {
         return _weightedApy;
     }
 
-    function validateAllocation(uint256[][] memory _allocations) internal pure returns (bool) {
+    function validateAllocation(
+        uint256[][] memory _allocations
+    ) internal pure returns (bool) {
         uint256 grandTotal;
         for (uint256 i = 0; i < _allocations.length; i++) {
             uint256 chainTotal;
@@ -46,8 +50,11 @@ library AllocationMaths {
         }
     }
 
-    function shouldRebalance(uint256 currentWeightedApy, uint256 optimalWeightedApy) internal pure returns (bool) {
-        if (currentWeightedApy <= optimalWeightedApy) return false;
+    function shouldRebalance(
+        uint256 currentWeightedApy,
+        uint256 optimalWeightedApy
+    ) internal pure returns (bool) {
+        if (optimalWeightedApy <= currentWeightedApy) return false;
         uint256 result = optimalWeightedApy - currentWeightedApy;
         if (result >= 50) {
             return true;
@@ -56,7 +63,10 @@ library AllocationMaths {
         }
     }
 
-    function validateSingleMove(uint256[][] memory allocations, uint256 totalAssets) internal pure returns (bool) {
+    function validateSingleMove(
+        uint256[][] memory allocations,
+        uint256 totalAssets
+    ) internal pure returns (bool) {
         uint256 maxMove = (totalAssets * 3_000) / 10_000;
         for (uint256 i = 0; i < allocations.length; i++) {
             for (uint256 j = 0; j < allocations[i].length; j++) {

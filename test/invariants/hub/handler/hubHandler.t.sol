@@ -32,13 +32,14 @@ contract HubVaultHandler is Test {
     bytes32[] public protocolIds;
 
     // ghost variables
-    uint256 public ghost_totalWithdrawn;
-    uint256 public ghost_totalSentToSpokes;
-    uint256 public ghost_totalRecalledFromSpokes;
-    uint256 public ghost_pendingWithdrawalsCount;
+    uint256 public ghostTotalWithdrawn;
+    uint256 public ghostTotalSentToSpokes;
+    uint256 public ghostTotalRecalledFromSpokes;
 
-    mapping(address => uint256) public ghost_userDeposited;
-    mapping(address => uint256) public ghost_userShares;
+    //uint256 public ghost_pendingWithdrawalsCount;
+
+    //mapping(address => uint256) public ghost_userDeposited;
+    // mapping(address => uint256) public ghost_userShares;
 
     constructor(
         HUB _hub,
@@ -46,11 +47,14 @@ contract HubVaultHandler is Test {
         Asset _usdc,
         SpokeVault _spoke,
         address _rebalancer,
-        uint64 _chainSelector
+        uint64 /*_chainSelector*/
     ) {
         hub = _hub;
         owner = _owner;
         usdc = _usdc;
+        spoke = _spoke;
+        rebalancer = _rebalancer;
+
         // create bounded set of depositors
         depositors.push(makeAddr("alice"));
         depositors.push(makeAddr("bob"));
@@ -135,7 +139,7 @@ contract HubVaultHandler is Test {
 
         vm.prank(rebalancer);
         try hub.sendToSpoke(chainSelector, instructions) {
-            ghost_totalSentToSpokes += amount;
+            ghostTotalSentToSpokes += amount;
         } catch {}
     }
 
@@ -166,7 +170,7 @@ contract HubVaultHandler is Test {
 
         vm.prank(rebalancer);
         try hub.recallFromSpoke(chainSelector, instructions, messageId) {
-            ghost_totalRecalledFromSpokes += amount;
+            ghostTotalRecalledFromSpokes += amount;
         } catch {}
     }
 

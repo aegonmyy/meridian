@@ -3,11 +3,11 @@ pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {CCIPLocalSimulator, IRouterClient, LinkToken} from "chainlink-local/ccip/CCIPLocalSimulator.sol";
-import {HUB} from "../../../src/Hub.sol";
-import {SpokeVault} from "../../../src/Spoke.sol";
+import {HUB} from "../../src/Hub.sol";
+import {SpokeVault} from "../../src/Spoke.sol";
 import {Asset} from "../mocks/Asset.sol";
 import {MockYieldSource} from "../mocks/mockYield.sol";
-import {CCIPHelpers} from "../../../src/libraries/CCIPHelpers.sol";
+import {CCIPHelpers} from "../../src/libraries/CCIPHelpers.sol";
 
 contract HandleRebalanceTest is Test {
     // ── CCIP ──────────────────────────────────────────────────────────────

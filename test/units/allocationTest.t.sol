@@ -2,7 +2,7 @@
 pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {SpokeVault} from "../../../src/Spoke.sol";
+import {SpokeVault} from "../../src/Spoke.sol";
 import {Asset} from "../mocks/Asset.sol";
 import {MockYieldSource} from "../mocks/mockYield.sol";
 

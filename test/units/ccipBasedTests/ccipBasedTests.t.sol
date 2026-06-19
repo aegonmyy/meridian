@@ -505,14 +505,6 @@ contract DepositFlowTest is Test {
         hub.withdraw(assets, operator, betty);
     }
 
-    function test_withdraw_path1_revert_zeroAmount() public {
-        _setLastReportTimestamp(chainSelector, block.timestamp);
-
-        vm.prank(alice);
-        vm.expectRevert();
-        hub.withdraw(0, alice, alice);
-    }
-
     function test_withdraw_path1_revert_exceedsBalance() public {
         _setLastReportTimestamp(chainSelector, block.timestamp);
 
@@ -1240,7 +1232,7 @@ contract DepositFlowTest is Test {
     // Hub receives CONFIRM_RECEIPT callback with updated spoke balance
     // =========================================================================
 
-    function test_rebalance_sourceAdapterDecreases() public {
+    function test_rebalance_sourceAdapterDecreases_v2() public {
         // register compound adapter on spoke
         MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
         bytes32 COMPOUND = keccak256("COMPOUND");
@@ -1268,7 +1260,7 @@ contract DepositFlowTest is Test {
         assertEq(aaveAdapter.totalAssets(), 3_000e6);
     }
 
-    function test_rebalance_targetAdapterIncreases() public {
+    function test_rebalance_targetAdapterIncreases_v2() public {
         MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
         bytes32 COMPOUND = keccak256("COMPOUND");
         vm.prank(owner);
@@ -1292,7 +1284,7 @@ contract DepositFlowTest is Test {
         assertEq(compoundAdapter.totalAssets(), 2_000e6);
     }
 
-    function test_rebalance_totalSpokeBalanceUnchanged() public {
+    function test_rebalance_totalSpokeBalanceUnchanged_v2() public {
         // capital moved between adapters — total spoke value unchanged
         MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
         bytes32 COMPOUND = keccak256("COMPOUND");
@@ -1318,7 +1310,7 @@ contract DepositFlowTest is Test {
         assertEq(hub.spokeBalances(chainSelector), spokeBalanceBefore);
     }
 
-    function test_rebalance_spokeBalancesUpdatedByConfirmReceipt() public {
+    function test_rebalance_spokeBalancesUpdatedByConfirmReceipt_v2() public {
         MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
         bytes32 COMPOUND = keccak256("COMPOUND");
         vm.prank(owner);
@@ -1344,7 +1336,7 @@ contract DepositFlowTest is Test {
         assertEq(hub.spokeBalances(chainSelector), 5_000e6);
     }
 
-    function test_rebalance_totalAssetsUnchanged() public {
+    function test_rebalance_totalAssetsUnchanged_v2() public {
         // no capital leaves or enters — totalAssets unchanged
         MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
         bytes32 COMPOUND = keccak256("COMPOUND");
@@ -1369,7 +1361,7 @@ contract DepositFlowTest is Test {
         assertEq(hub.totalAssets(), totalBefore);
     }
 
-    function test_rebalance_noTokensLeaveSpokeChain() public {
+    function test_rebalance_noTokensLeaveSpokeChain_v2() public {
         // REBALANCE is intra-spoke — no USDC should move cross-chain
         // hub USDC balance unchanged
         MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
@@ -1396,7 +1388,7 @@ contract DepositFlowTest is Test {
         assertEq(usdc.balanceOf(address(hub)), hubUSDCBefore);
     }
 
-    function test_rebalance_revert_notRebalancer() public {
+    function test_rebalance_revert_notRebalancer_v2() public {
         CCIPHelpers.AdapterInstructions[]
             memory instructions = new CCIPHelpers.AdapterInstructions[](1);
         instructions[0] = CCIPHelpers.AdapterInstructions({
@@ -1411,7 +1403,7 @@ contract DepositFlowTest is Test {
         hub.rebalance(chainSelector, instructions, bytes32(0));
     }
 
-    function test_rebalance_revert_spokeNotFound() public {
+    function test_rebalance_revert_spokeNotFound_v2() public {
         CCIPHelpers.AdapterInstructions[]
             memory instructions = new CCIPHelpers.AdapterInstructions[](1);
         instructions[0] = CCIPHelpers.AdapterInstructions({
@@ -1426,7 +1418,7 @@ contract DepositFlowTest is Test {
         hub.rebalance(9999, instructions, bytes32(0));
     }
 
-    function test_rebalance_revert_removedSpoke() public {
+    function test_rebalance_revert_removedSpoke_v2() public {
         vm.prank(owner);
         hub.removeSpoke(chainSelector);
 

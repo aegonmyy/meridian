@@ -2,7 +2,7 @@
 pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
-import {SpokeVault} from "../../../src/Spoke.sol";
+import {SpokeVault} from "../../src/Spoke.sol";
 import {Asset} from "../mocks/Asset.sol";
 import {MockYieldSource} from "../mocks/mockYield.sol";
 
@@ -22,9 +22,11 @@ contract MockYieldSourceTest is Test {
 
     function test_transferFrom_depositsCorrectly() public {
         address user = makeAddr("user");
-        vm.store(address(usdc), user, bytes32(1_000e6));
-        usdc.approve(address(adapter), 1_000e6);
+        bytes32 balanceSlot = keccak256(abi.encode(user, uint256(0)));
+        vm.store(address(usdc), balanceSlot, bytes32(uint256(1_000e6)));
 
+        vm.prank(user);
+        usdc.approve(address(adapter), 1_000e6);
         vm.prank(user);
         adapter.deposit(1_000e6);
 
@@ -34,8 +36,10 @@ contract MockYieldSourceTest is Test {
 
     function test_withdraw_returnsUserBalance() public {
         address user = makeAddr("user");
-        vm.store(address(usdc), address(adapter), bytes32(5_000e6));
+        bytes32 adapterBalanceSlot = keccak256(abi.encode(address(adapter), uint256(0)));
+        vm.store(address(usdc), adapterBalanceSlot, bytes32(uint256(5_000e6)));
 
+        vm.prank(user);
         adapter.withdraw(2_000e6);
 
         assertEq(usdc.balanceOf(user), 2_000e6);

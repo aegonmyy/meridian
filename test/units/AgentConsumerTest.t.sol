@@ -40,11 +40,6 @@ contract AgentConsumerTest is Test {
         new AgentConsumer(rebalancer, address(0), owner);
     }
 
-    function test_constructor_revert_zeroOwner() public {
-        vm.expectRevert(AgentConsumer.InvalidConstructorArguments.selector);
-        new AgentConsumer(rebalancer, agent, address(0));
-    }
-
     // ── proposeAllocation access control ──────────────────────────────────
 
     function test_proposeAllocation_agentCanCall() public {

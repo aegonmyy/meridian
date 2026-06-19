@@ -1443,4 +1443,331 @@ contract DepositFlowTest is Test {
         vm.expectRevert(SpokeNotFound.selector);
         hub.rebalance(chainSelector, instructions, bytes32(0));
     }
+
+    function test_totalManagedAssets_sumIncludesAllActiveSpokes() public {
+        // register second spoke via fake selector
+        uint64 selector2 = 9999;
+        address mockSpoke2 = makeAddr("spoke2");
+        vm.prank(owner);
+        hub.addSpoke(selector2, mockSpoke2);
+
+        // set balances directly
+        _setSpokeBalance(chainSelector, 3_000e6);
+        _setSpokeBalance(selector2, 4_000e6);
+
+        // idle = 10_000 - 3_000 = 7_000 (after sendToSpoke)
+        // but we set balances via vm.store so idle is still 10_000
+        // totalAssets = idle + spoke1 + spoke2
+        assertEq(
+            hub.totalAssets(),
+            usdc.balanceOf(address(hub)) + 3_000e6 + 4_000e6
+        );
+    }
+
+    function test_totalManagedAssets_skipsRemovedSpoke() public {
+        uint64 selector2 = 9999;
+        address mockSpoke2 = makeAddr("spoke2");
+        vm.prank(owner);
+        hub.addSpoke(selector2, mockSpoke2);
+
+        _setSpokeBalance(chainSelector, 3_000e6);
+        _setSpokeBalance(selector2, 4_000e6);
+
+        // remove spoke2
+        vm.prank(owner);
+        hub.removeSpoke(selector2);
+
+        // totalAssets should not include spoke2 balance
+        assertEq(hub.totalAssets(), usdc.balanceOf(address(hub)) + 3_000e6);
+    }
+
+    function test_totalManagedAssets_includesInTransitAssets() public {
+        uint256 totalBefore = hub.totalAssets();
+
+        // send to spoke — inTransitAssets incremented temporarily
+        // CCIP synchronous so it resolves immediately
+        // verify identity holds throughout
+        _sendToSpoke(3_000e6);
+
+        assertEq(
+            hub.totalAssets(),
+            usdc.balanceOf(address(hub)) +
+                hub.inTransitAssets() +
+                hub.spokeBalances(chainSelector)
+        );
+        // total unchanged
+        assertEq(hub.totalAssets(), totalBefore);
+    }
+
+    function test_totalManagedAssets_returnsIdleWhenNoSpokes() public {
+        // deploy fresh hub with no spokes
+        vm.prank(owner);
+        HUB freshHub = new HUB(
+            "Test",
+            "TST",
+            address(router),
+            owner,
+            address(link),
+            address(usdc),
+            rebalancer
+        );
+
+        address betty = makeAddr("betty");
+        usdc.mint(betty, 5_000e6);
+        vm.startPrank(betty);
+        usdc.approve(address(freshHub), 5_000e6);
+        freshHub.deposit(5_000e6, betty);
+        vm.stopPrank();
+
+        // no spokes — totalAssets equals idle only
+        assertEq(freshHub.totalAssets(), usdc.balanceOf(address(freshHub)));
+    }
+
+    function test_totalManagedAssets_reflectsYieldOnMultipleSpokes() public {
+        // register second spoke
+        uint64 selector2 = 9999;
+        address mockSpoke2 = makeAddr("spoke2");
+        vm.prank(owner);
+        hub.addSpoke(selector2, mockSpoke2);
+
+        // set initial balances
+        _setSpokeBalance(chainSelector, 3_000e6);
+        _setSpokeBalance(selector2, 4_000e6);
+
+        uint256 totalBefore = hub.totalAssets();
+
+        // simulate yield on spoke1 via report balance
+        aaveAdapter.simulateYield(200e6);
+        _triggerReportBalance();
+
+        // totalAssets increased by yield on spoke1
+        assertEq(hub.totalAssets(), totalBefore + 200e6);
+    }
+
+    function test_totalManagedAssets_zeroWhenEmpty() public {
+        vm.prank(owner);
+        HUB freshHub = new HUB(
+            "Test",
+            "TST",
+            address(router),
+            owner,
+            address(link),
+            address(usdc),
+            rebalancer
+        );
+        // no deposits — totalAssets is zero
+        assertEq(freshHub.totalAssets(), 0);
+    }
+
+    // =========================================================================
+    // rebalance Tests
+    // Hub sends REBALANCE message to spoke via CCIP
+    // Spoke withdraws from source adapter and deposits into target adapter
+    // No tokens leave the chain — intra-spoke capital movement
+    // Hub receives CONFIRM_RECEIPT callback with updated spoke balance
+    // =========================================================================
+
+    function test_rebalance_sourceAdapterDecreases() public {
+        // register compound adapter on spoke
+        MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
+        bytes32 COMPOUND = keccak256("COMPOUND");
+        vm.prank(owner);
+        spoke.setAdapter(COMPOUND, address(compoundAdapter));
+
+        // deploy 5_000 to aave on spoke
+        _sendToSpoke(5_000e6);
+        assertEq(aaveAdapter.totalAssets(), 5_000e6);
+
+        // rebalance 2_000 from aave to compound
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 2_000e6,
+            targetAdapter: COMPOUND,
+            targetAmount: 0
+        });
+        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+        vm.prank(rebalancer);
+        hub.rebalance(chainSelector, instructions, messageId);
+
+        // aave decreased by 2_000
+        assertEq(aaveAdapter.totalAssets(), 3_000e6);
+    }
+
+    function test_rebalance_targetAdapterIncreases() public {
+        MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
+        bytes32 COMPOUND = keccak256("COMPOUND");
+        vm.prank(owner);
+        spoke.setAdapter(COMPOUND, address(compoundAdapter));
+
+        _sendToSpoke(5_000e6);
+
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 2_000e6,
+            targetAdapter: COMPOUND,
+            targetAmount: 0
+        });
+        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+        vm.prank(rebalancer);
+        hub.rebalance(chainSelector, instructions, messageId);
+
+        // compound received 2_000
+        assertEq(compoundAdapter.totalAssets(), 2_000e6);
+    }
+
+    function test_rebalance_totalSpokeBalanceUnchanged() public {
+        // capital moved between adapters — total spoke value unchanged
+        MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
+        bytes32 COMPOUND = keccak256("COMPOUND");
+        vm.prank(owner);
+        spoke.setAdapter(COMPOUND, address(compoundAdapter));
+
+        _sendToSpoke(5_000e6);
+        uint256 spokeBalanceBefore = hub.spokeBalances(chainSelector);
+
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 2_000e6,
+            targetAdapter: COMPOUND,
+            targetAmount: 0
+        });
+        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+        vm.prank(rebalancer);
+        hub.rebalance(chainSelector, instructions, messageId);
+
+        // spoke balance unchanged — same total just different adapter split
+        assertEq(hub.spokeBalances(chainSelector), spokeBalanceBefore);
+    }
+
+    function test_rebalance_spokeBalancesUpdatedByConfirmReceipt() public {
+        MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
+        bytes32 COMPOUND = keccak256("COMPOUND");
+        vm.prank(owner);
+        spoke.setAdapter(COMPOUND, address(compoundAdapter));
+
+        _sendToSpoke(5_000e6);
+
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 2_000e6,
+            targetAdapter: COMPOUND,
+            targetAmount: 0
+        });
+        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+        vm.prank(rebalancer);
+        hub.rebalance(chainSelector, instructions, messageId);
+
+        // CONFIRM_RECEIPT arrived — lastReportTimestamp updated
+        assertGt(hub.lastReportTimestamp(chainSelector), 0);
+        // spoke balance reflects aggregated balance of all adapters
+        assertEq(hub.spokeBalances(chainSelector), 5_000e6);
+    }
+
+    function test_rebalance_totalAssetsUnchanged() public {
+        // no capital leaves or enters — totalAssets unchanged
+        MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
+        bytes32 COMPOUND = keccak256("COMPOUND");
+        vm.prank(owner);
+        spoke.setAdapter(COMPOUND, address(compoundAdapter));
+
+        _sendToSpoke(5_000e6);
+        uint256 totalBefore = hub.totalAssets();
+
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 2_000e6,
+            targetAdapter: COMPOUND,
+            targetAmount: 0
+        });
+        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+        vm.prank(rebalancer);
+        hub.rebalance(chainSelector, instructions, messageId);
+
+        assertEq(hub.totalAssets(), totalBefore);
+    }
+
+    function test_rebalance_noTokensLeaveSpokeChain() public {
+        // REBALANCE is intra-spoke — no USDC should move cross-chain
+        // hub USDC balance unchanged
+        MockYieldSource compoundAdapter = new MockYieldSource(address(usdc));
+        bytes32 COMPOUND = keccak256("COMPOUND");
+        vm.prank(owner);
+        spoke.setAdapter(COMPOUND, address(compoundAdapter));
+
+        _sendToSpoke(5_000e6);
+        uint256 hubUSDCBefore = usdc.balanceOf(address(hub));
+
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 2_000e6,
+            targetAdapter: COMPOUND,
+            targetAmount: 0
+        });
+        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+        vm.prank(rebalancer);
+        hub.rebalance(chainSelector, instructions, messageId);
+
+        // hub USDC unchanged — no cross-chain token transfer
+        assertEq(usdc.balanceOf(address(hub)), hubUSDCBefore);
+    }
+
+    function test_rebalance_revert_notRebalancer() public {
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 1_000e6,
+            targetAdapter: keccak256("COMPOUND"),
+            targetAmount: 0
+        });
+
+        vm.prank(alice);
+        vm.expectRevert(NotRebalancer.selector);
+        hub.rebalance(chainSelector, instructions, bytes32(0));
+    }
+
+    function test_rebalance_revert_spokeNotFound() public {
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 1_000e6,
+            targetAdapter: keccak256("COMPOUND"),
+            targetAmount: 0
+        });
+
+        vm.prank(rebalancer);
+        vm.expectRevert(SpokeNotFound.selector);
+        hub.rebalance(9999, instructions, bytes32(0));
+    }
+
+    function test_rebalance_revert_removedSpoke() public {
+        vm.prank(owner);
+        hub.removeSpoke(chainSelector);
+
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 1_000e6,
+            targetAdapter: keccak256("COMPOUND"),
+            targetAmount: 0
+        });
+
+        vm.prank(rebalancer);
+        vm.expectRevert(SpokeNotFound.selector);
+        hub.rebalance(chainSelector, instructions, bytes32(0));
+    }
 }

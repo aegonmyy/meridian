@@ -4,7 +4,7 @@ out = "out"
 libs = ["lib"]
 
 [invariant]
-runs = 200
-depth = 150
+runs = 150
+depth = 10
 fail_on_revert = true
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

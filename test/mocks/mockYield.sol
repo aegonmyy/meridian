@@ -13,22 +13,20 @@ contract MockYieldSource is IYieldSource {
     }
 
     function deposit(uint256 amount) external override {
-        bool success = asset.transferFrom(msg.sender, address(this), amount);
-        require(success, "deposit in mock yield failed");
+        asset.transferFrom(msg.sender, address(this), amount);
         _totalAssets += amount;
     }
 
     function withdraw(uint256 amount) external override {
         _totalAssets -= amount;
-        bool success = asset.transfer(msg.sender, amount);
-        require(success, "withdraw in mock yield failed");
+        asset.transfer(msg.sender, amount);
     }
 
     function totalAssets() external view override returns (uint256) {
         return _totalAssets;
     }
 
-    // Helper for tests — simulate yield accrual
+    // Helper for tests — simulate yield accrual without external token movement
     function simulateYield(uint256 amount) external {
         _totalAssets += amount;
     }

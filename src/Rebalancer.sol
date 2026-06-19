@@ -45,6 +45,11 @@ contract Rebalancer {
     event ProtocolRemovedFromWhitelist(bytes32 protocolId);
 
     constructor(address _hub, address _agentConsumer, address _owner) {
+        if (
+            _hub == address(0) ||
+            _agentConsumer == address(0) ||
+            _owner == address(0)
+        ) revert InvalidConstructorArguments();
         HUB = IHub(_hub);
         AGENT_CONSUMER = _agentConsumer;
         owner = _owner;
@@ -84,7 +89,7 @@ contract Rebalancer {
             _messageId := keccak256(ptr, 0x40)
             mstore(0x40, add(ptr, 0x40))
         }
-
+        lastRebalanceTimestamp = block.timestamp;
         HUB.rebalance(_chainSelector, _instructions, _messageId);
     }
 

@@ -36,11 +36,14 @@ contract MockYieldSourceTest is Test {
 
     function test_withdraw_returnsUserBalance() public {
         address user = makeAddr("user");
-        bytes32 adapterBalanceSlot = keccak256(abi.encode(address(adapter), uint256(0)));
-        vm.store(address(usdc), adapterBalanceSlot, bytes32(uint256(5_000e6)));
 
-        vm.prank(user);
+        usdc.mint(user, 5_000e6);
+        vm.startPrank(user);
+        usdc.approve(address(adapter), 5_000e6);
+        adapter.deposit(5_000e6);
+
         adapter.withdraw(2_000e6);
+        vm.stopPrank();
 
         assertEq(usdc.balanceOf(user), 2_000e6);
         assertEq(adapter.totalAssets(), 3_000e6);

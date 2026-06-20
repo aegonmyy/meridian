@@ -49,11 +49,6 @@ contract RebalancerTest is Test {
         usdc = new Asset();
 
         // deploy rebalancer first — hub needs its address
-        rebalancer = new Rebalancer(
-            makeAddr("hubPlaceholder"),
-            agentConsumer,
-            owner
-        );
 
         vm.prank(owner);
         hub = new HUB(
@@ -63,8 +58,11 @@ contract RebalancerTest is Test {
             owner,
             address(link),
             address(usdc),
-            address(rebalancer)
+            address(0)
         );
+
+        vm.prank(owner);
+        rebalancer = new Rebalancer(address(hub), agentConsumer, owner);
 
         vm.prank(owner);
         spoke = new SpokeVault(
@@ -75,22 +73,11 @@ contract RebalancerTest is Test {
             address(link),
             chainSelector
         );
-
-        // redeploy rebalancer with real hub address
-        rebalancer = new Rebalancer(address(hub), agentConsumer, owner);
+        vm.prank(owner);
+        hub.setRebalancer(address(rebalancer));
 
         // update hub rebalancer — need to redeploy hub with correct rebalancer
         // simplest: redeploy hub with correct rebalancer address
-        vm.prank(owner);
-        hub = new HUB(
-            "Meridian USDC",
-            "mUSDC",
-            address(router),
-            owner,
-            address(link),
-            address(usdc),
-            address(rebalancer)
-        );
 
         vm.prank(owner);
         spoke = new SpokeVault(

@@ -160,24 +160,28 @@ contract Rebalancer {
         uint64 _chainSelector
     ) external onlyAuthorized {
         whitelistedChains[_chainSelector] = true;
+        emit ChainWhitelisted(_chainSelector);
     }
 
     function removeChainFromWhitelist(
         uint64 _chainSelector
     ) external onlyAuthorized {
         whitelistedChains[_chainSelector] = false;
+        emit ChainRemovedFromWhitelist(_chainSelector);
     }
 
     function addProtocolToWhitelist(
         bytes32 _protocolId
     ) external onlyAuthorized {
         whitelistedProtocols[_protocolId] = true;
+        emit ProtocolWhitelisted(_protocolId);
     }
 
     function removeProtocolFromWhitelist(
         bytes32 _protocolId
     ) external onlyAuthorized {
         whitelistedProtocols[_protocolId] = false;
+        emit ProtocolRemovedFromWhitelist(_protocolId);
     }
 
     function _flatten(

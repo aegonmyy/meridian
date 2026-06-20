@@ -10,13 +10,14 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered} from "./errors/hubErrors.sol";
+import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal} from "./errors/hubErrors.sol";
 
 /// @title HubVault
 /// @notice ERC4626 vault on Ethereum — entry point for all user deposits and withdrawals
 /// @dev Inherits ERC4626, CCIPReceiver, and Ownable. Delegates capital deployment to
 ///      spoke vaults on L2s via Chainlink CCIP. Share price reflects total managed assets
 ///      across all spokes. Only the Rebalancer can move capital between hub and spokes.
+
 contract HUB is ERC4626, CCIPReceiver, Ownable {
     using SafeERC20 for IERC20;
 
@@ -66,7 +67,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     mapping(uint64 => uint256) public lastReportTimestamp;
 
     /// @notice Pending withdrawal requests awaiting fresh spoke balances
-    mapping(bytes32 => PendingWithdrawal) public pendingWithdrawals;
+    mapping(bytes32 => PendingWithdrawal) public pendingWithdrawals; //flagged
 
     /// @notice Maximum age of spoke balance report before considered stale
     uint256 public constant MAX_STALENESS = 1 hours;
@@ -109,7 +110,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @param balance Updated spoke balance
     event SpokeBalanceUpdated(uint64 indexed chainSelector, uint256 balance);
 
-    event SpokeRemoved(uint64 indexed chainSelector);
+    event SpokeRemoved(uint64 indexed spokeSelector);
 
     /// @notice Restricts access to the Rebalancer contract or the hub itself
     /// @dev Hub calls recallFromSpoke internally for user withdrawal path
@@ -237,7 +238,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @dev Only callable by Rebalancer or hub internally. Uses WITHDRAW_AMOUNT — spoke decides which adapters to pull from.
     /// @param _chainSelector CCIP chain selector of the target spoke
     /// @param _instructions Array with single entry — adapter bytes32(0), amount to recall
-    /// @param _messageId Unique message id for this withdrawal path
     function recallFromSpoke(
         uint64 _chainSelector,
         CCIPHelpers.AdapterInstructions[] memory _instructions,
@@ -310,6 +310,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         }
         _transfer(owner, address(this), shares);
         assets = previewRedeem(shares);
+        if (assets == 0) revert ZeroWithdrawal();
         uint256 idle = _idleBalance() - reservedAssets;
         bytes32 _messageId;
         assembly {
@@ -352,10 +353,13 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
                 idleBacked: false
             });
             uint64 _chainSelector = _findBestSpoke();
-            CCIPHelpers.AdapterInstructions[] memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+            uint256 shortfall = assets - idle;
+            reservedAssets += idle; // reserve whatever idle we have
+            CCIPHelpers.AdapterInstructions[]
+                memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
             _instructions[0] = CCIPHelpers.AdapterInstructions({
                 adapter: bytes32(0),
-                amount: assets,
+                amount: shortfall,
                 targetAdapter: bytes32(0),
                 targetAmount: 0
             });
@@ -397,7 +401,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
 
         for (uint256 i = 0; i < selectors.length; i++) {
             if (!spokes[selectors[i]].exists) continue;
-            CCIPHelpers.AdapterInstructions[] memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
+            CCIPHelpers.AdapterInstructions[]
+                memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
             CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
                 messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
                 instructions: _instructions,
@@ -439,13 +444,17 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     ) internal {
         uint256 size;
         uint256 totalAmount;
-        for (uint256 i = 0; i < _message.instructions.length; i++) {
-            totalAmount += _message.instructions[i].amount;
+        bool isRebalance = _message.messageType == CCIPHelpers.MessageType.REBALANCE;
+        if (!isRebalance) {
+            for (uint256 i = 0; i < _message.instructions.length; i++) {
+                totalAmount += _message.instructions[i].amount;
+            }
         }
         if (totalAmount > 0) {
             size = 1;
         }
-        Client.EVMTokenAmount[] memory tokenAmount = new Client.EVMTokenAmount[](size);
+        Client.EVMTokenAmount[]
+            memory tokenAmount = new Client.EVMTokenAmount[](size);
         if (size == 1) {
             tokenAmount[0] = Client.EVMTokenAmount({
                 token: address(asset()),
@@ -539,6 +548,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @notice Returns the USDC balance currently sitting idle on the hub
     /// @dev Does not include in-transit or spoke-deployed capital
     /// @return USDC balance of this contract
+
     function _idleBalance() internal view returns (uint256) {
         return IERC20(asset()).balanceOf(address(this));
     }
@@ -607,6 +617,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         uint64 _chainSelector
     ) internal {
         bytes32 _messageId = _message.messageId;
+        //uint256 _amountArrived = _message.instructions[0].amount;
         spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
         emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);

@@ -36,3 +36,6 @@ error SpokeNotFound();
 
 ///@notice Thrown when provided spoke already exists
 error SpokeExists();
+
+/// @notice Thrown when withdrawal results in zero assets
+error ZeroWithdrawal();

@@ -47,13 +47,14 @@ contract HubVaultHandler is Test {
         Asset _usdc,
         SpokeVault _spoke,
         address _rebalancer,
-        uint64 /*_chainSelector*/
+        uint64 _chainSelector
     ) {
         hub = _hub;
         owner = _owner;
         usdc = _usdc;
         spoke = _spoke;
         rebalancer = _rebalancer;
+        chainSelector = _chainSelector;
 
         // create bounded set of depositors
         depositors.push(makeAddr("alice"));
@@ -64,6 +65,14 @@ contract HubVaultHandler is Test {
         // fund them
         uint256 existingLength = _hub.spokeChainSelectorsLength();
         ghostSpokeChainSelectorsLength = existingLength;
+        for (uint256 i = 0; i < existingLength; i++) {
+            uint64 selector = _hub.spokeChainSelectors(i);
+            registeredSelectors.push(selector);
+            isRegistered[selector] = true;
+            ghostEverRegistered[selector] = true;
+            (address spokeAddr,,) = _hub.spokes(selector);
+            ghostCurrentSpoke[selector] = spokeAddr;
+        }
         for (uint256 i = 0; i < depositors.length; i++) {
             usdc.mint(depositors[i], 1_000_000e6);
             vm.prank(depositors[i]);

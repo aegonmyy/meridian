@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.33;
 
-import {IRebalancer} from "./interfaces/IRebalancer.sol";
-import {AllocationProposal} from "./interfaces/IRebalancer.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {AllocationProposal, IRebalancer} from "./interfaces/IRebalancer.sol";
 
 /// @title AgentConsumer
 /// @notice Entry point for the off-chain agent to submit allocation proposals

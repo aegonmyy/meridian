@@ -4,7 +4,21 @@ pragma solidity ^0.8.33;
 import {Test} from "forge-std/Test.sol";
 import {AllocationMaths, arrayOutOfBound} from "../../src/libraries/AllocationMaths.sol";
 
+/// @dev External harness needed for vm.expectRevert on internal library calls
+contract AllocationMathsHarness {
+    function weightedApy(uint256[] calldata allocations, uint256[] calldata apys)
+        external pure returns (uint256)
+    {
+        return AllocationMaths.weightedApy(allocations, apys);
+    }
+}
+
 contract AllocationMathsFuzzTest is Test {
+    AllocationMathsHarness harness;
+
+    function setUp() public {
+        harness = new AllocationMathsHarness();
+    }
     // =========================================================================
     // netApy fuzz tests
     // Property: result + costs always equals gross
@@ -125,7 +139,7 @@ contract AllocationMathsFuzzTest is Test {
         uint256[] memory apys = new uint256[](len2);
 
         vm.expectRevert(arrayOutOfBound.selector);
-        AllocationMaths.weightedApy(allocations, apys);
+        harness.weightedApy(allocations, apys);
     }
 
     // =========================================================================
@@ -235,14 +249,22 @@ contract AllocationMathsFuzzTest is Test {
         uint256 dust
     ) public pure {
         // allocation between 1 and 499 always fails
+        // use two chains so the rest can be distributed without violating per-market cap
         vm.assume(dust >= 1 && dust <= 499);
         uint256 rest = 10_000 - dust;
-        vm.assume(rest <= 6_000);
+        // split rest across two chains — each gets half
+        uint256 chain2 = rest / 2;
+        uint256 chain1Rest = rest - chain2;
+        // ensure each part is within valid per-market bounds
+        vm.assume(chain1Rest <= 6_000 && chain1Rest >= 500);
+        vm.assume(chain2 <= 6_000 && chain2 >= 500);
 
-        uint256[][] memory allocations = new uint256[][](1);
+        uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](2);
-        allocations[0][0] = dust;
-        allocations[0][1] = rest;
+        allocations[1] = new uint256[](1);
+        allocations[0][0] = dust;       // dust allocation — should fail
+        allocations[0][1] = chain1Rest;
+        allocations[1][0] = chain2;
 
         assertFalse(AllocationMaths.validateAllocation(allocations));
     }

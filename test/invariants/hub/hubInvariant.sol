@@ -175,12 +175,12 @@ contract HubVaultInvariant is Test {
     }
 
     /// @dev length never exceeds unique selectors registered
-    // function invariant_lengthNeverExceedsUniqueSelectors() public view {
-    //     assertLe(
-    //         hub.spokeChainSelectorsLength(),
-    //         handler.registeredSelectorsLength()
-    //     );
-    // }
+    function invariant_lengthNeverExceedsUniqueSelectors() public view {
+        assertLe(
+            hub.spokeChainSelectorsLength(),
+            handler.registeredSelectorsLength()
+        );
+    }
 
     /// @dev once registered selector stays in array forever
     function invariant_everRegisteredStaysInArray() public view {

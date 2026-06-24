@@ -107,7 +107,7 @@ contract FullFlowTest is Test {
         ethFork = vm.createSelectFork(vm.envString("ETH_RPC_URL"));
         arbFork = vm.createFork(vm.envString("ARBITRUM_RPC_URL"));
 
-        // deploy CCIP simulator, make persistent across forks
+        // deploy CCIP simulator — make persistent across forks
         ccipSimulator = new CCIPLocalSimulatorFork();
         vm.makePersistent(address(ccipSimulator));
 
@@ -115,6 +115,8 @@ contract FullFlowTest is Test {
         vm.selectFork(ethFork);
 
         vm.startPrank(owner);
+
+        // Step 1 — deploy hub with no rebalancer yet
         hub = new HUB(
             "Meridian USDC",
             "mUSDC",
@@ -125,20 +127,29 @@ contract FullFlowTest is Test {
             address(0)
         );
 
-        rebalancer = new Rebalancer(address(hub), address(0), owner);
+        // Step 2 — deploy rebalancer with placeholder agentConsumer
+        // agentConsumer needs rebalancer address first — circular dependency
+        address placeholder = makeAddr("placeholder");
+        rebalancer = new Rebalancer(address(hub), placeholder, owner);
+
+        // Step 3 — deploy agentConsumer with real rebalancer address
         agentConsumer = new AgentConsumer(address(rebalancer), agent, owner);
 
-        // redeploy rebalancer with real agentConsumer
+        // Step 4 — redeploy rebalancer with real agentConsumer
         rebalancer = new Rebalancer(
             address(hub),
             address(agentConsumer),
             owner
         );
+
+        // Step 5 — wire hub to real rebalancer
         hub.setRebalancer(address(rebalancer));
 
+        // Step 6 — whitelist chains and protocols
         rebalancer.addChainToWhitelist(ARBITRUM_SELECTOR);
         rebalancer.addProtocolToWhitelist(AAVE);
         rebalancer.addProtocolToWhitelist(COMPOUND);
+
         vm.stopPrank();
 
         // fund hub with LINK for CCIP fees

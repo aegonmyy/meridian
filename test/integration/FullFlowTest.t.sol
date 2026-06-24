@@ -9,8 +9,8 @@ import {SpokeVault} from "../../src/Spoke.sol";
 import {Rebalancer} from "../../src/Rebalancer.sol";
 import {AgentConsumer} from "../../src/AgentConsumer.sol";
 import {AaveAdapter} from "../../src/adapters/AaveAdapter.sol";
-import {compoundAdapter} from "../../src/adapters/CompoundAdapter.sol";
-import {morphoAdapter} from "../../src/adapters/MorphoAdapter.sol";
+import {CompoundAdapter} from "../../src/adapters/CompoundAdapter.sol";
+import {MorphoAdapter} from "../../src/adapters/MorphoAdapter.sol";
 import {CCIPHelpers} from "../../src/libraries/CCIPHelpers.sol";
 import {AllocationProposal} from "../../src/interfaces/IRebalancer.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -79,7 +79,7 @@ contract FullFlowTest is Test {
     AgentConsumer public agentConsumer;
     SpokeVault public arbSpoke;
     AaveAdapter public arbAave;
-    compoundAdapter public arbCompound;
+    CompoundAdapter public arbCompound;
 
     // =========================================================================
     // Actors
@@ -179,7 +179,7 @@ contract FullFlowTest is Test {
         );
 
         arbAave = new AaveAdapter(ARB_AAVE_POOL, ARB_AAVE_AUSDC, ARB_USDC);
-        arbCompound = new compoundAdapter(ARB_USDC, ARB_COMPOUND);
+        arbCompound = new CompoundAdapter(ARB_USDC, ARB_COMPOUND);
 
         arbSpoke.setAdapter(AAVE, address(arbAave));
         arbSpoke.setAdapter(COMPOUND, address(arbCompound));
@@ -234,8 +234,7 @@ contract FullFlowTest is Test {
 
         console.log("CCIP message sent, routing to Arbitrum...");
 
-        // route DEPOSIT message to Arbitrum
-        vm.selectFork(arbFork);
+        // route DEPOSIT message: call from ethFork so simulator treats it as source
         ccipSimulator.switchChainAndRouteMessage(arbFork);
 
         // Aave aToken dust from real pool liquidity index, tolerance 1e6 (1 USDC)
@@ -248,8 +247,7 @@ contract FullFlowTest is Test {
         );
         console.log("Spoke deposited into Aave:", arbAave.totalAssets());
 
-        // route CONFIRM_RECEIPT back to Ethereum
-        vm.selectFork(ethFork);
+        // route CONFIRM_RECEIPT back: call from arbFork (where spoke sent the message)
         ccipSimulator.switchChainAndRouteMessage(ethFork);
 
         assertEq(hub.inTransitAssets(), 0, "inTransit cleared after confirm");

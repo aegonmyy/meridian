@@ -1,416 +1,451 @@
-// // SPDX-License-Identifier: MIT
-// pragma solidity 0.8.33;
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.33;
 
-// import {Script, console} from "forge-std/Script.sol";
-// import {StdCheats} from "forge-std/StdCheats.sol";
-// import {CCIPLocalSimulatorFork, Register} from "chainlink-local/ccip/CCIPLocalSimulatorFork.sol";
+import {Script, console} from "forge-std/Script.sol";
+import {StdCheats} from "forge-std/StdCheats.sol";
+import {CCIPLocalSimulatorFork, Register} from "chainlink-local/ccip/CCIPLocalSimulatorFork.sol";
 
-// import {HUB} from "../src/Hub.sol";
-// import {SpokeVault} from "../src/Spoke.sol";
-// import {Rebalancer} from "../src/Rebalancer.sol";
-// import {AgentConsumer} from "../src/AgentConsumer.sol";
-// import {AaveAdapter} from "../src/adapters/AaveAdapter.sol";
-// import {compoundAdapter} from "../src/adapters/CompoundAdapter.sol";
-// import {morphoAdapter} from "../src/adapters/MorphoAdapter.sol";
-// import {CCIPHelpers} from "../src/libraries/CCIPHelpers.sol";
-// import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {HUB} from "../src/Hub.sol";
+import {SpokeVault} from "../src/Spoke.sol";
+import {Rebalancer} from "../src/Rebalancer.sol";
+import {AgentConsumer} from "../src/AgentConsumer.sol";
+import {AaveAdapter} from "../src/adapters/AaveAdapter.sol";
+import {CompoundAdapter} from "../src/adapters/CompoundAdapter.sol";
+import {MorphoAdapter} from "../src/adapters/MorphoAdapter.sol";
+import {CCIPHelpers} from "../src/libraries/CCIPHelpers.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-// /// @title Deploy
-// /// @notice Deploys the full Meridian protocol stack across forked Ethereum + L2 chains
-// /// @dev Uses CCIPLocalSimulatorFork for multi-chain simulation in a single Foundry run.
-// ///      Run with:
-// ///      forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL -vvv
-// ///
-// ///      Required env vars:
-// ///        ETH_RPC_URL      — Ethereum mainnet fork RPC
-// ///        ARBITRUM_RPC_URL — Arbitrum mainnet fork RPC
-// ///        BASE_RPC_URL     — Base mainnet fork RPC
-// ///        OPTIMISM_RPC_URL — Optimism mainnet fork RPC
-// ///        DEPLOYER_KEY     — Private key for deployment
-// ///        AGENT_ADDRESS    — Address of the off-chain agent wallet
+/// @title Deploy
+/// @notice Deploys the full Meridian protocol stack across forked Ethereum + L2 chains
+/// @dev Uses CCIPLocalSimulatorFork for multi-chain simulation in a single Foundry run.
+///      Run with:
+///      forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL -vvv
+///
+///      Required env vars:
+///        ETH_RPC_URL      — Ethereum mainnet fork RPC
+///        ARBITRUM_RPC_URL — Arbitrum mainnet fork RPC
+///        BASE_RPC_URL     — Base mainnet fork RPC
+///        OPTIMISM_RPC_URL — Optimism mainnet fork RPC
+///        DEPLOYER_KEY     — Private key for deployment
+///        AGENT_ADDRESS    — Address of the off-chain agent wallet
 
-// contract Deploy is Script, StdCheats {
-//     // =========================================================================
-//     // Chain Selectors (Chainlink CCIP mainnet)
-//     // =========================================================================
-//     uint64 constant ARBITRUM_SELECTOR = 4949039107694359620;
-//     uint64 constant BASE_SELECTOR = 15971525489660198786;
-//     uint64 constant OPTIMISM_SELECTOR = 3734403246176062136;
-//     uint64 constant ETH_SELECTOR = 5009297550715157269;
+contract Deploy is Script, StdCheats {
+    // =========================================================================
+    // Chain Selectors (Chainlink CCIP mainnet)
+    // =========================================================================
+    uint64 constant ARBITRUM_SELECTOR = 4949039107694359620;
+    uint64 constant BASE_SELECTOR = 15971525489660198786;
+    uint64 constant OPTIMISM_SELECTOR = 3734403246176062136;
+    uint64 constant ETH_SELECTOR = 5009297550715157269;
 
-//     // =========================================================================
-//     // Mainnet Addresses — Ethereum
-//     // =========================================================================
-//     address constant ETH_CCIP_ROUTER =
-//         0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D;
-//     address constant ETH_LINK = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
-//     address constant ETH_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    // =========================================================================
+    // Mainnet Addresses — Ethereum
+    // =========================================================================
+    address constant ETH_CCIP_ROUTER =
+        0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D;
+    address constant ETH_LINK = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
+    address constant ETH_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
-//     // =========================================================================
-//     // Mainnet Addresses — Arbitrum
-//     // =========================================================================
-//     address constant ARB_CCIP_ROUTER =
-//         0x141fa059441E0ca23ce184B6A78bafD2A517DdE8;
-//     address constant ARB_LINK = 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
-//     address constant ARB_USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
-//     address constant ARB_AAVE_POOL = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
-//     address constant ARB_AAVE_AUSDC =
-//         0x724dc807b04555b71ed48a6896b6F41593b8C637;
-//     address constant ARB_COMPOUND = 0xAec1F48e02Cfb822Be958B68C7957156EB3F0b6e;
-//     address constant ARB_MORPHO = 0x6b13c060cFF5f99DB49A31B3c7FA97A4E8E1a82d;
+    // =========================================================================
+    // Mainnet Addresses — Arbitrum
+    // =========================================================================
+    address constant ARB_CCIP_ROUTER =
+        0x141fa059441E0ca23ce184B6A78bafD2A517DdE8;
+    address constant ARB_LINK = 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
+    address constant ARB_USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+    address constant ARB_AAVE_POOL = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
+    address constant ARB_AAVE_AUSDC =
+        0x724dc807b04555b71ed48a6896b6F41593b8C637;
+    address constant ARB_COMPOUND = 0xAec1F48e02Cfb822Be958B68C7957156EB3F0b6e;
+    address constant ARB_MORPHO = 0x6b13c060cFF5f99DB49A31B3c7FA97A4E8E1a82d;
 
-//     // Morpho USDC/WETH market params on Arbitrum
-//     address constant ARB_MORPHO_LOAN_TOKEN =
-//         0xaf88d065e77c8cC2239327C5EDb3A432268e5831; // USDC
-//     address constant ARB_MORPHO_COLLATERAL_TOKEN =
-//         0x82aF49447D8a07e3bd95BD0d56f35241523fBab1; // WETH
-//     address constant ARB_MORPHO_ORACLE =
-//         0xb0341374f5C6CA3a7A75E2Cd5b41CD5c9d4bA76E;
-//     address constant ARB_MORPHO_IRM =
-//         0x9b8c989FF27E948f55b53BB19b3cC1947852DdA2;
-//     uint256 constant ARB_MORPHO_LLTV = 860000000000000000; // 86%
+    // Morpho USDC/WETH market params on Arbitrum
+    address constant ARB_MORPHO_LOAN_TOKEN =
+        0xaf88d065e77c8cC2239327C5EDb3A432268e5831; // USDC
+    address constant ARB_MORPHO_COLLATERAL_TOKEN =
+        0x82aF49447D8a07e3bd95BD0d56f35241523fBab1; // WETH
+    address constant ARB_MORPHO_ORACLE =
+        0xb0341374f5C6CA3a7A75E2Cd5b41CD5c9d4bA76E;
+    address constant ARB_MORPHO_IRM =
+        0x9b8c989FF27E948f55b53BB19b3cC1947852DdA2;
+    uint256 constant ARB_MORPHO_LLTV = 860000000000000000; // 86%
 
-//     // =========================================================================
-//     // Mainnet Addresses — Base
-//     // =========================================================================
-//     address constant BASE_CCIP_ROUTER =
-//         0x881e3A65B4d4a04dD529061dd0071cf975F58bCD;
-//     address constant BASE_LINK = 0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196;
-//     address constant BASE_USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-//     address constant BASE_AAVE_POOL =
-//         0xa238dd80c259a72E81D7E4664317D3e8B36b4De9;
-//     address constant BASE_AAVE_AUSDC =
-//         0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB;
-//     address constant BASE_COMPOUND = 0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf;
-//     address constant BASE_MORPHO = 0xBBbbBBbbBb9cC5e90e3b3af64BDaf62C37EefFCC;
+    // =========================================================================
+    // Mainnet Addresses — Base
+    // =========================================================================
+    address constant BASE_CCIP_ROUTER =
+        0x881e3A65B4d4a04dD529061dd0071cf975F58bCD;
+    address constant BASE_LINK = 0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e196;
+    address constant BASE_USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address constant BASE_AAVE_POOL =
+        0xa238dd80c259a72E81D7E4664317D3e8B36b4De9;
+    address constant BASE_AAVE_AUSDC =
+        0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB;
+    address constant BASE_COMPOUND = 0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf;
+    address constant BASE_MORPHO = 0xBBbbBBbbBb9cC5e90e3b3af64BDaf62C37EefFCC;
 
-//     address constant BASE_MORPHO_LOAN_TOKEN =
-//         0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // USDC
-//     address constant BASE_MORPHO_COLLATERAL_TOKEN =
-//         0x4200000000000000000000000000000000000006; // WETH
-//     address constant BASE_MORPHO_ORACLE =
-//         0x543E9ccf95B4DB3A45f3A3c79E6A6892fB2dfb7f;
-//     address constant BASE_MORPHO_IRM =
-//         0x46415998764C29aB2a25CbeA6254146D50D22687;
-//     uint256 constant BASE_MORPHO_LLTV = 860000000000000000; // 86%
+    address constant BASE_MORPHO_LOAN_TOKEN =
+        0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // USDC
+    address constant BASE_MORPHO_COLLATERAL_TOKEN =
+        0x4200000000000000000000000000000000000006; // WETH
+    address constant BASE_MORPHO_ORACLE =
+        0x543E9ccf95B4DB3A45f3A3c79E6A6892fB2dfb7f;
+    address constant BASE_MORPHO_IRM =
+        0x46415998764C29aB2a25CbeA6254146D50D22687;
+    uint256 constant BASE_MORPHO_LLTV = 860000000000000000; // 86%
 
-//     // =========================================================================
-//     // Mainnet Addresses — Optimism
-//     // =========================================================================
-//     address constant OP_CCIP_ROUTER =
-//         0x3206695CaE29952f4b0c22a169725a865bc8Ce0f;
-//     address constant OP_LINK = 0x350a791Bfc2C21F9Ed5d10980Dad2e2638ffa7f6;
-//     address constant OP_USDC = 0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85;
-//     address constant OP_AAVE_POOL = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
-//     address constant OP_AAVE_AUSDC = 0x38d693cE1dF5AaDF7bC62595A37D667aD57922e5;
-//     address constant OP_COMPOUND = 0x2e44e174f7D53F0212823acC11C01A11d58c5bCB;
+    // =========================================================================
+    // Mainnet Addresses — Optimism
+    // =========================================================================
+    address constant OP_CCIP_ROUTER =
+        0x3206695CaE29952f4b0c22a169725a865bc8Ce0f;
+    address constant OP_LINK = 0x350a791Bfc2C21F9Ed5d10980Dad2e2638ffa7f6;
+    address constant OP_USDC = 0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85;
+    address constant OP_AAVE_POOL = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
+    address constant OP_AAVE_AUSDC = 0x38d693cE1dF5AaDF7bC62595A37D667aD57922e5;
+    address constant OP_COMPOUND = 0x2e44e174f7D53F0212823acC11C01A11d58c5bCB;
 
-//     // =========================================================================
-//     // Protocol IDs
-//     // =========================================================================
-//     bytes32 constant AAVE = keccak256("AAVE");
-//     bytes32 constant COMPOUND = keccak256("COMPOUND");
-//     bytes32 constant MORPHO = keccak256("MORPHO");
+    // =========================================================================
+    // Protocol IDs
+    // =========================================================================
+    bytes32 constant AAVE = keccak256("AAVE");
+    bytes32 constant COMPOUND = keccak256("COMPOUND");
+    bytes32 constant MORPHO = keccak256("MORPHO");
 
-//     // =========================================================================
-//     // Deployed Addresses (populated during run)
-//     // =========================================================================
-//     HUB public hub;
-//     Rebalancer public rebalancer;
-//     AgentConsumer public agentConsumer;
+    struct DeploymentAddresses {
+        address hub;
+        address rebalancer;
+        address agentConsumer;
+        address arbSpoke;
+        address baseSpoke;
+        address opSpoke;
+        address arbAave;
+        address arbCompound;
+        address arbMorpho;
+        address baseAave;
+        address baseCompound;
+        address baseMorpho;
+        address opAave;
+        address opCompound;
+    }
 
-//     SpokeVault public arbSpoke;
-//     SpokeVault public baseSpoke;
-//     SpokeVault public opSpoke;
+    function run() external {
+        address deployer = vm.envAddress("DEPLOYER_ADDRESS");
+        uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
+        address agent = vm.envAddress("AGENT_ADDRESS");
+        DeploymentAddresses memory deployed;
 
-//     AaveAdapter public arbAave;
-//     compoundAdapter public arbCompound;
-//     morphoAdapter public arbMorpho;
+        // ─── Create forks ──────────────────────────────────────────────────
+        uint256 ethFork = vm.createFork(vm.envString("ETH_RPC_URL"));
+        uint256 arbFork = vm.createFork(vm.envString("ARBITRUM_RPC_URL"));
+        uint256 baseFork = vm.createFork(vm.envString("BASE_RPC_URL"));
+        uint256 opFork = vm.createFork(vm.envString("OPTIMISM_RPC_URL"));
 
-//     AaveAdapter public baseAave;
-//     compoundAdapter public baseCompound;
-//     morphoAdapter public baseMorpho;
+        // ─── Deploy CCIP simulator on Ethereum fork ────────────────────────
+        vm.selectFork(ethFork);
+        CCIPLocalSimulatorFork ccipSimulator = new CCIPLocalSimulatorFork();
+        vm.makePersistent(address(ccipSimulator));
 
-//     AaveAdapter public opAave;
-//     compoundAdapter public opCompound;
+        _deployCore(deployer, deployerKey, agent, deployed, ethFork);
+        _deployArbitrum(deployer, deployerKey, deployed, arbFork);
+        _deployBase(deployer, deployerKey, deployed, baseFork);
+        _deployOptimism(deployer, deployerKey, deployed, opFork);
+        _registerSpokes(deployerKey, deployed, ethFork);
 
-//     // =========================================================================
-//     // Forks
-//     // =========================================================================
-//     uint256 public ethFork;
-//     uint256 public arbFork;
-//     uint256 public baseFork;
-//     uint256 public opFork;
+        _printAddresses(deployed, agent);
 
-//     CCIPLocalSimulatorFork public ccipSimulator;
+        _writeJson(deployed);
+    }
 
-//     function run() external {
-//         address deployer = vm.envAddress("DEPLOYER_ADDRESS");
-//         uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
-//         address agent = vm.envAddress("AGENT_ADDRESS");
+    function _deployCore(
+        address deployer,
+        uint256 deployerKey,
+        address agent,
+        DeploymentAddresses memory deployed,
+        uint256 ethFork
+    ) internal {
+        vm.selectFork(ethFork);
+        vm.startBroadcast(deployerKey);
 
-//         // ─── Create forks ──────────────────────────────────────────────────
-//         ethFork = vm.createFork(vm.envString("ETH_RPC_URL"));
-//         arbFork = vm.createFork(vm.envString("ARBITRUM_RPC_URL"));
-//         baseFork = vm.createFork(vm.envString("BASE_RPC_URL"));
-//         opFork = vm.createFork(vm.envString("OPTIMISM_RPC_URL"));
+        HUB hub = new HUB(
+            "Meridian USDC",
+            "mUSDC",
+            ETH_CCIP_ROUTER,
+            deployer,
+            ETH_LINK,
+            ETH_USDC,
+            address(0)
+        );
+        deployed.hub = address(hub);
+        console.log("Hub deployed:", deployed.hub);
 
-//         // ─── Deploy CCIP simulator on Ethereum fork ────────────────────────
-//         vm.selectFork(ethFork);
-//         ccipSimulator = new CCIPLocalSimulatorFork();
-//         vm.makePersistent(address(ccipSimulator));
+        Rebalancer rebalancer = new Rebalancer(deployed.hub, address(0), deployer);
+        deployed.rebalancer = address(rebalancer);
+        console.log("Rebalancer deployed:", deployed.rebalancer);
 
-//         // ─── 1. Deploy Hub on Ethereum ─────────────────────────────────────
-//         vm.selectFork(ethFork);
-//         vm.startBroadcast(deployerKey);
+        AgentConsumer agentConsumer = new AgentConsumer(
+            deployed.rebalancer,
+            agent,
+            deployer
+        );
+        deployed.agentConsumer = address(agentConsumer);
+        console.log("AgentConsumer deployed:", deployed.agentConsumer);
 
-//         hub = new HUB(
-//             "Meridian USDC",
-//             "mUSDC",
-//             ETH_CCIP_ROUTER,
-//             deployer,
-//             ETH_LINK,
-//             ETH_USDC,
-//             address(0) // rebalancer set after
-//         );
-//         console.log("Hub deployed:", address(hub));
+        hub.setRebalancer(deployed.rebalancer);
+        console.log("Hub rebalancer set");
 
-//         // ─── 2. Deploy Rebalancer ──────────────────────────────────────────
-//         rebalancer = new Rebalancer(address(hub), address(0), deployer);
-//         // AgentConsumer deployed next — set after
-//         console.log("Rebalancer deployed:", address(rebalancer));
+        rebalancer = new Rebalancer(deployed.hub, deployed.agentConsumer, deployer);
+        deployed.rebalancer = address(rebalancer);
+        hub.setRebalancer(deployed.rebalancer);
+        console.log("Rebalancer redeployed with AgentConsumer:", deployed.rebalancer);
 
-//         // ─── 3. Deploy AgentConsumer ───────────────────────────────────────
-//         agentConsumer = new AgentConsumer(address(rebalancer), agent, deployer);
-//         console.log("AgentConsumer deployed:", address(agentConsumer));
+        rebalancer.addChainToWhitelist(ARBITRUM_SELECTOR);
+        rebalancer.addChainToWhitelist(BASE_SELECTOR);
+        rebalancer.addChainToWhitelist(OPTIMISM_SELECTOR);
+        rebalancer.addProtocolToWhitelist(AAVE);
+        rebalancer.addProtocolToWhitelist(COMPOUND);
+        rebalancer.addProtocolToWhitelist(MORPHO);
+        console.log("Chains and protocols whitelisted");
 
-//         // ─── 4. Wire Hub → Rebalancer ─────────────────────────────────────
-//         hub.setRebalancer(address(rebalancer));
-//         console.log("Hub rebalancer set");
+        deal(ETH_USDC, deployer, 1_000_000e6);
+        IERC20(ETH_USDC).approve(deployed.hub, 1_000_000e6);
+        hub.deposit(1_000_000e6, deployer);
+        console.log("Hub funded: 1,000,000 USDC deposited");
 
-//         // ─── 5. Wire Rebalancer → AgentConsumer ───────────────────────────
-//         // redeploy rebalancer with correct agentConsumer
-//         rebalancer = new Rebalancer(
-//             address(hub),
-//             address(agentConsumer),
-//             deployer
-//         );
-//         hub.setRebalancer(address(rebalancer));
-//         console.log(
-//             "Rebalancer redeployed with AgentConsumer:",
-//             address(rebalancer)
-//         );
+        deal(ETH_LINK, deployed.hub, 100 ether);
+        console.log("Hub funded: 100 LINK");
 
-//         // ─── 6. Whitelist chains and protocols ────────────────────────────
-//         rebalancer.addChainToWhitelist(ARBITRUM_SELECTOR);
-//         rebalancer.addChainToWhitelist(BASE_SELECTOR);
-//         rebalancer.addChainToWhitelist(OPTIMISM_SELECTOR);
-//         rebalancer.addProtocolToWhitelist(AAVE);
-//         rebalancer.addProtocolToWhitelist(COMPOUND);
-//         rebalancer.addProtocolToWhitelist(MORPHO);
-//         console.log("Chains and protocols whitelisted");
+        vm.stopBroadcast();
+    }
 
-//         // ─── 7. Fund Hub with USDC and LINK ───────────────────────────────
-//         deal(ETH_USDC, deployer, 1_000_000e6);
-//         IERC20(ETH_USDC).approve(address(hub), 1_000_000e6);
-//         hub.deposit(1_000_000e6, deployer);
-//         console.log("Hub funded: 1,000,000 USDC deposited");
+    function _deployArbitrum(
+        address deployer,
+        uint256 deployerKey,
+        DeploymentAddresses memory deployed,
+        uint256 arbFork
+    ) internal {
+        vm.selectFork(arbFork);
+        vm.startBroadcast(deployerKey);
 
-//         deal(ETH_LINK, address(hub), 100 ether);
-//         console.log("Hub funded: 100 LINK");
+        SpokeVault arbSpoke = new SpokeVault(
+            deployed.hub,
+            ARB_USDC,
+            ARB_CCIP_ROUTER,
+            deployer,
+            ARB_LINK,
+            ETH_SELECTOR
+        );
+        deployed.arbSpoke = address(arbSpoke);
+        console.log("Arbitrum Spoke deployed:", deployed.arbSpoke);
 
-//         vm.stopBroadcast();
+        AaveAdapter arbAave = new AaveAdapter(ARB_AAVE_POOL, ARB_AAVE_AUSDC, ARB_USDC);
+        deployed.arbAave = address(arbAave);
+        CompoundAdapter arbCompound = new CompoundAdapter(ARB_USDC, ARB_COMPOUND);
+        deployed.arbCompound = address(arbCompound);
+        MorphoAdapter arbMorpho = new MorphoAdapter(
+            ARB_USDC,
+            ARB_MORPHO,
+            ARB_MORPHO_LOAN_TOKEN,
+            ARB_MORPHO_COLLATERAL_TOKEN,
+            ARB_MORPHO_ORACLE,
+            ARB_MORPHO_IRM,
+            ARB_MORPHO_LLTV
+        );
+        deployed.arbMorpho = address(arbMorpho);
+        console.log("Arbitrum adapters deployed");
 
-//         // ─── 8. Deploy Arbitrum Spoke + Adapters ──────────────────────────
-//         vm.selectFork(arbFork);
-//         vm.startBroadcast(deployerKey);
+        arbSpoke.setAdapter(AAVE, deployed.arbAave);
+        arbSpoke.setAdapter(COMPOUND, deployed.arbCompound);
+        arbSpoke.setAdapter(MORPHO, deployed.arbMorpho);
+        console.log("Arbitrum adapters registered");
 
-//         arbSpoke = new SpokeVault(
-//             address(hub),
-//             ARB_USDC,
-//             ARB_CCIP_ROUTER,
-//             deployer,
-//             ARB_LINK,
-//             ETH_SELECTOR
-//         );
-//         console.log("Arbitrum Spoke deployed:", address(arbSpoke));
+        deal(ARB_LINK, deployed.arbSpoke, 100 ether);
+        console.log("Arbitrum Spoke funded: 100 LINK");
 
-//         arbAave = new AaveAdapter(ARB_AAVE_POOL, ARB_AAVE_AUSDC, ARB_USDC);
-//         arbCompound = new compoundAdapter(ARB_USDC, ARB_COMPOUND);
-//         arbMorpho = new morphoAdapter(
-//             ARB_USDC,
-//             ARB_MORPHO,
-//             ARB_MORPHO_LOAN_TOKEN,
-//             ARB_MORPHO_COLLATERAL_TOKEN,
-//             ARB_MORPHO_ORACLE,
-//             ARB_MORPHO_IRM,
-//             ARB_MORPHO_LLTV
-//         );
-//         console.log("Arbitrum adapters deployed");
+        vm.stopBroadcast();
+    }
 
-//         arbSpoke.setAdapter(AAVE, address(arbAave));
-//         arbSpoke.setAdapter(COMPOUND, address(arbCompound));
-//         arbSpoke.setAdapter(MORPHO, address(arbMorpho));
-//         console.log("Arbitrum adapters registered");
+    function _deployBase(
+        address deployer,
+        uint256 deployerKey,
+        DeploymentAddresses memory deployed,
+        uint256 baseFork
+    ) internal {
+        vm.selectFork(baseFork);
+        vm.startBroadcast(deployerKey);
 
-//         deal(ARB_LINK, address(arbSpoke), 100 ether);
-//         console.log("Arbitrum Spoke funded: 100 LINK");
+        SpokeVault baseSpoke = new SpokeVault(
+            deployed.hub,
+            BASE_USDC,
+            BASE_CCIP_ROUTER,
+            deployer,
+            BASE_LINK,
+            ETH_SELECTOR
+        );
+        deployed.baseSpoke = address(baseSpoke);
+        console.log("Base Spoke deployed:", deployed.baseSpoke);
 
-//         vm.stopBroadcast();
+        AaveAdapter baseAave = new AaveAdapter(BASE_AAVE_POOL, BASE_AAVE_AUSDC, BASE_USDC);
+        deployed.baseAave = address(baseAave);
+        CompoundAdapter baseCompound = new CompoundAdapter(BASE_USDC, BASE_COMPOUND);
+        deployed.baseCompound = address(baseCompound);
+        MorphoAdapter baseMorpho = new MorphoAdapter(
+            BASE_USDC,
+            BASE_MORPHO,
+            BASE_MORPHO_LOAN_TOKEN,
+            BASE_MORPHO_COLLATERAL_TOKEN,
+            BASE_MORPHO_ORACLE,
+            BASE_MORPHO_IRM,
+            BASE_MORPHO_LLTV
+        );
+        deployed.baseMorpho = address(baseMorpho);
+        console.log("Base adapters deployed");
 
-//         // ─── 9. Deploy Base Spoke + Adapters ──────────────────────────────
-//         vm.selectFork(baseFork);
-//         vm.startBroadcast(deployerKey);
+        baseSpoke.setAdapter(AAVE, deployed.baseAave);
+        baseSpoke.setAdapter(COMPOUND, deployed.baseCompound);
+        baseSpoke.setAdapter(MORPHO, deployed.baseMorpho);
+        console.log("Base adapters registered");
 
-//         baseSpoke = new SpokeVault(
-//             address(hub),
-//             BASE_USDC,
-//             BASE_CCIP_ROUTER,
-//             deployer,
-//             BASE_LINK,
-//             ETH_SELECTOR
-//         );
-//         console.log("Base Spoke deployed:", address(baseSpoke));
+        deal(BASE_LINK, deployed.baseSpoke, 100 ether);
+        console.log("Base Spoke funded: 100 LINK");
 
-//         baseAave = new AaveAdapter(BASE_AAVE_POOL, BASE_AAVE_AUSDC, BASE_USDC);
-//         baseCompound = new compoundAdapter(BASE_USDC, BASE_COMPOUND);
-//         baseMorpho = new morphoAdapter(
-//             BASE_USDC,
-//             BASE_MORPHO,
-//             BASE_MORPHO_LOAN_TOKEN,
-//             BASE_MORPHO_COLLATERAL_TOKEN,
-//             BASE_MORPHO_ORACLE,
-//             BASE_MORPHO_IRM,
-//             BASE_MORPHO_LLTV
-//         );
-//         console.log("Base adapters deployed");
+        vm.stopBroadcast();
+    }
 
-//         baseSpoke.setAdapter(AAVE, address(baseAave));
-//         baseSpoke.setAdapter(COMPOUND, address(baseCompound));
-//         baseSpoke.setAdapter(MORPHO, address(baseMorpho));
-//         console.log("Base adapters registered");
+    function _deployOptimism(
+        address deployer,
+        uint256 deployerKey,
+        DeploymentAddresses memory deployed,
+        uint256 opFork
+    ) internal {
+        vm.selectFork(opFork);
+        vm.startBroadcast(deployerKey);
 
-//         deal(BASE_LINK, address(baseSpoke), 100 ether);
-//         console.log("Base Spoke funded: 100 LINK");
+        SpokeVault opSpoke = new SpokeVault(
+            deployed.hub,
+            OP_USDC,
+            OP_CCIP_ROUTER,
+            deployer,
+            OP_LINK,
+            ETH_SELECTOR
+        );
+        deployed.opSpoke = address(opSpoke);
+        console.log("Optimism Spoke deployed:", deployed.opSpoke);
 
-//         vm.stopBroadcast();
+        AaveAdapter opAave = new AaveAdapter(OP_AAVE_POOL, OP_AAVE_AUSDC, OP_USDC);
+        deployed.opAave = address(opAave);
+        CompoundAdapter opCompound = new CompoundAdapter(OP_USDC, OP_COMPOUND);
+        deployed.opCompound = address(opCompound);
+        console.log("Optimism adapters deployed");
 
-//         // ─── 10. Deploy Optimism Spoke + Adapters ─────────────────────────
-//         vm.selectFork(opFork);
-//         vm.startBroadcast(deployerKey);
+        opSpoke.setAdapter(AAVE, deployed.opAave);
+        opSpoke.setAdapter(COMPOUND, deployed.opCompound);
+        console.log("Optimism adapters registered");
 
-//         opSpoke = new SpokeVault(
-//             address(hub),
-//             OP_USDC,
-//             OP_CCIP_ROUTER,
-//             deployer,
-//             OP_LINK,
-//             ETH_SELECTOR
-//         );
-//         console.log("Optimism Spoke deployed:", address(opSpoke));
+        deal(OP_LINK, deployed.opSpoke, 100 ether);
+        console.log("Optimism Spoke funded: 100 LINK");
 
-//         opAave = new AaveAdapter(OP_AAVE_POOL, OP_AAVE_AUSDC, OP_USDC);
-//         opCompound = new compoundAdapter(OP_USDC, OP_COMPOUND);
-//         console.log("Optimism adapters deployed");
+        vm.stopBroadcast();
+    }
 
-//         opSpoke.setAdapter(AAVE, address(opAave));
-//         opSpoke.setAdapter(COMPOUND, address(opCompound));
-//         console.log("Optimism adapters registered");
+    function _registerSpokes(
+        uint256 deployerKey,
+        DeploymentAddresses memory deployed,
+        uint256 ethFork
+    ) internal {
+        vm.selectFork(ethFork);
+        vm.startBroadcast(deployerKey);
 
-//         deal(OP_LINK, address(opSpoke), 100 ether);
-//         console.log("Optimism Spoke funded: 100 LINK");
+        HUB hub = HUB(deployed.hub);
+        hub.addSpoke(ARBITRUM_SELECTOR, deployed.arbSpoke);
+        hub.addSpoke(BASE_SELECTOR, deployed.baseSpoke);
+        hub.addSpoke(OPTIMISM_SELECTOR, deployed.opSpoke);
+        console.log("Spokes registered on Hub");
 
-//         vm.stopBroadcast();
+        vm.stopBroadcast();
+    }
 
-//         // ─── 11. Register Spokes on Hub ───────────────────────────────────
-//         vm.selectFork(ethFork);
-//         vm.startBroadcast(deployerKey);
+    function _printAddresses(
+        DeploymentAddresses memory deployed,
+        address agent
+    ) internal pure {
+        console.log("\n=== Deployed Addresses ===");
+        console.log("Hub:           ", deployed.hub);
+        console.log("Rebalancer:    ", deployed.rebalancer);
+        console.log("AgentConsumer: ", deployed.agentConsumer);
+        console.log("Agent wallet:  ", agent);
+        console.log("");
+        console.log("Arbitrum Spoke:  ", deployed.arbSpoke);
+        console.log("Arbitrum Aave:   ", deployed.arbAave);
+        console.log("Arbitrum Cmpd:   ", deployed.arbCompound);
+        console.log("Arbitrum Morpho: ", deployed.arbMorpho);
+        console.log("");
+        console.log("Base Spoke:      ", deployed.baseSpoke);
+        console.log("Base Aave:       ", deployed.baseAave);
+        console.log("Base Cmpd:       ", deployed.baseCompound);
+        console.log("Base Morpho:     ", deployed.baseMorpho);
+        console.log("");
+        console.log("Optimism Spoke:  ", deployed.opSpoke);
+        console.log("Optimism Aave:   ", deployed.opAave);
+        console.log("Optimism Cmpd:   ", deployed.opCompound);
+        console.log("==========================\n");
+    }
 
-//         hub.addSpoke(ARBITRUM_SELECTOR, address(arbSpoke));
-//         hub.addSpoke(BASE_SELECTOR, address(baseSpoke));
-//         hub.addSpoke(OPTIMISM_SELECTOR, address(opSpoke));
-//         console.log("Spokes registered on Hub");
-
-//         vm.stopBroadcast();
-
-//         // ─── 12. Print all deployed addresses ─────────────────────────────
-//         _printAddresses(agent);
-
-//         // ─── 13. Write addresses to JSON ──────────────────────────────────
-//         _writeJson();
-//     }
-
-//     function _printAddresses(address agent) internal view {
-//         console.log("\n=== Deployed Addresses ===");
-//         console.log("Hub:           ", address(hub));
-//         console.log("Rebalancer:    ", address(rebalancer));
-//         console.log("AgentConsumer: ", address(agentConsumer));
-//         console.log("Agent wallet:  ", agent);
-//         console.log("");
-//         console.log("Arbitrum Spoke:  ", address(arbSpoke));
-//         console.log("Arbitrum Aave:   ", address(arbAave));
-//         console.log("Arbitrum Cmpd:   ", address(arbCompound));
-//         console.log("Arbitrum Morpho: ", address(arbMorpho));
-//         console.log("");
-//         console.log("Base Spoke:      ", address(baseSpoke));
-//         console.log("Base Aave:       ", address(baseAave));
-//         console.log("Base Cmpd:       ", address(baseCompound));
-//         console.log("Base Morpho:     ", address(baseMorpho));
-//         console.log("");
-//         console.log("Optimism Spoke:  ", address(opSpoke));
-//         console.log("Optimism Aave:   ", address(opAave));
-//         console.log("Optimism Cmpd:   ", address(opCompound));
-//         console.log("==========================\n");
-//     }
-
-//     function _writeJson() internal {
-//         string memory json = string.concat(
-//             "{\n",
-//             '  "hub": "',
-//             vm.toString(address(hub)),
-//             '",\n',
-//             '  "rebalancer": "',
-//             vm.toString(address(rebalancer)),
-//             '",\n',
-//             '  "agentConsumer": "',
-//             vm.toString(address(agentConsumer)),
-//             '",\n',
-//             '  "arbSpoke": "',
-//             vm.toString(address(arbSpoke)),
-//             '",\n',
-//             '  "baseSpoke": "',
-//             vm.toString(address(baseSpoke)),
-//             '",\n',
-//             '  "opSpoke": "',
-//             vm.toString(address(opSpoke)),
-//             '",\n',
-//             '  "arbAave": "',
-//             vm.toString(address(arbAave)),
-//             '",\n',
-//             '  "arbCompound": "',
-//             vm.toString(address(arbCompound)),
-//             '",\n',
-//             '  "arbMorpho": "',
-//             vm.toString(address(arbMorpho)),
-//             '",\n',
-//             '  "baseAave": "',
-//             vm.toString(address(baseAave)),
-//             '",\n',
-//             '  "baseCompound": "',
-//             vm.toString(address(baseCompound)),
-//             '",\n',
-//             '  "baseMorpho": "',
-//             vm.toString(address(baseMorpho)),
-//             '",\n',
-//             '  "opAave": "',
-//             vm.toString(address(opAave)),
-//             '",\n',
-//             '  "opCompound": "',
-//             vm.toString(address(opCompound)),
-//             '"\n',
-//             "}"
-//         );
-//         vm.writeFile("deployed.json", json);
-//         console.log("Deployed addresses written to deployed.json");
-//     }
-// }
+    function _writeJson(DeploymentAddresses memory deployed) internal {
+        string memory jsonPart1 = string.concat(
+            "{\n",
+            '  "hub": "',
+            vm.toString(deployed.hub),
+            '",\n',
+            '  "rebalancer": "',
+            vm.toString(deployed.rebalancer),
+            '",\n',
+            '  "agentConsumer": "',
+            vm.toString(deployed.agentConsumer),
+            '",\n',
+            '  "arbSpoke": "',
+            vm.toString(deployed.arbSpoke),
+            '"\n'
+        );
+        string memory jsonPart2 = string.concat(
+            ',\n',
+            '  "baseSpoke": "',
+            vm.toString(deployed.baseSpoke),
+            '",\n',
+            '  "opSpoke": "',
+            vm.toString(deployed.opSpoke),
+            '",\n',
+            '  "arbAave": "',
+            vm.toString(deployed.arbAave),
+            '",\n',
+            '  "arbCompound": "',
+            vm.toString(deployed.arbCompound),
+            '",\n',
+            '  "arbMorpho": "',
+            vm.toString(deployed.arbMorpho),
+            '"\n'
+        );
+        string memory jsonPart3 = string.concat(
+            ',\n',
+            '  "baseAave": "',
+            vm.toString(deployed.baseAave),
+            '",\n',
+            '  "baseCompound": "',
+            vm.toString(deployed.baseCompound),
+            '",\n',
+            '  "baseMorpho": "',
+            vm.toString(deployed.baseMorpho),
+            '",\n',
+            '  "opAave": "',
+            vm.toString(deployed.opAave),
+            '",\n',
+            '  "opCompound": "',
+            vm.toString(deployed.opCompound),
+            '"\n',
+            "}"
+        );
+        string memory json = string.concat(jsonPart1, jsonPart2, jsonPart3);
+        vm.writeFile("deployed.json", json);
+        console.log("Deployed addresses written to deployed.json");
+    }
+}

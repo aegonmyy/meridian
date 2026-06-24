@@ -8,7 +8,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 
 /// @title CompoundAdapter
 /// @notice Yield adapter that routes assets into Compound V3 Comet.
-contract compoundAdapter is IYieldSource {
+contract CompoundAdapter is IYieldSource {
     using SafeERC20 for IERC20;
 
     IERC20 public immutable ASSET;

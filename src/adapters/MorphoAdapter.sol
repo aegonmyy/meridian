@@ -9,7 +9,7 @@ import {MathLib} from "../interfaces/morpho/utils/MathLib.sol";
 
 /// @title MorphoAdapter
 /// @notice Yield adapter that routes assets into a configured Morpho market.
-contract morphoAdapter is IYieldSource {
+contract MorphoAdapter is IYieldSource {
     using MarketParamsLib for MarketParams;
     using SafeERC20 for IERC20;
     using MathLib for uint256;

@@ -317,15 +317,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.AdapterInstructions[] memory _instructions
     ) external onlyRebalancer {
         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
-        bytes32 _messageId;
         uint256 _amount = _instructions[0].amount;
-        assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, _amount)
-            mstore(add(ptr, 0x20), timestamp())
-            _messageId := keccak256(ptr, 0x40)
-            mstore(0x40, add(ptr, 0x40))
-        }
+        bytes32 _messageId = keccak256(abi.encode(_amount, block.timestamp));
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.DEPOSIT,
             instructions: _instructions,
@@ -435,14 +428,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         assets = previewRedeem(shares);
         if (assets == 0) revert ZeroWithdrawal();
         uint256 idle = _idleBalance() - reservedAssets;
-        bytes32 _messageId;
-        assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, receiver)
-            mstore(add(ptr, 0x20), timestamp())
-            _messageId := keccak256(ptr, 0x40)
-            mstore(0x40, add(ptr, 0x40))
-        }
+        bytes32 _messageId = _messageIdForWithdrawal(receiver);
         if (idle >= assets) {
             reservedAssets += assets;
             if (_allSpokesFresh()) {
@@ -623,6 +609,12 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         router.ccipSend(_chainSelector, ccipMessage);
     }
 
+    function _messageIdForWithdrawal(
+        address receiver
+    ) internal view returns (bytes32) {
+        return keccak256(abi.encode(receiver, block.timestamp));
+    }
+
     /// @notice Returns total protocol assets per ERC4626 standard
     /// @dev Overrides ERC4626.totalAssets(). Delegates to totalManagedAssets() which
     ///      aggregates idle + in-transit + all spoke balances. Share price reflects
@@ -702,12 +694,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     function _allSpokesFresh() internal view returns (bool) {
         uint64[] memory selectors = spokeChainSelectors;
         if (selectors.length == 0) return false;
+        uint256 currentTime = block.timestamp;
         for (uint256 i = 0; i < selectors.length; i++) {
             if (spokes[selectors[i]].exists == false) continue;
-            if (
-                block.timestamp - lastReportTimestamp[selectors[i]] >
-                MAX_STALENESS
-            ) {
+            if (currentTime > lastReportTimestamp[selectors[i]] + MAX_STALENESS) {
                 return false;
             }
         }

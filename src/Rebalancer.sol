@@ -178,7 +178,8 @@ contract Rebalancer {
         uint256 _amount,
         uint64 _chainSelector
     ) external onlyAuthorized {
-        if (block.timestamp - lastRebalanceTimestamp < COOLDOWN) {
+        uint256 currentTime = block.timestamp;
+        if (currentTime < lastRebalanceTimestamp + COOLDOWN) {
             revert CooldownNotElapsed();
         }
         if (_source == _target) revert SourceEqualsTarget();
@@ -198,15 +199,8 @@ contract Rebalancer {
             targetAdapter: _target,
             targetAmount: 0
         });
-        bytes32 _messageId;
-        assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, _target)
-            mstore(add(ptr, 0x20), timestamp())
-            _messageId := keccak256(ptr, 0x40)
-            mstore(0x40, add(ptr, 0x40))
-        }
-        lastRebalanceTimestamp = block.timestamp;
+        bytes32 _messageId = keccak256(abi.encode(_target, currentTime));
+        lastRebalanceTimestamp = currentTime;
         HUB.rebalance(_chainSelector, _instructions, _messageId);
     }
 
@@ -227,7 +221,8 @@ contract Rebalancer {
     function proposeAllocation(
         AllocationProposal memory proposal
     ) external onlyAuthorized {
-        if (block.timestamp - lastRebalanceTimestamp < COOLDOWN) {
+        uint256 currentTime = block.timestamp;
+        if (currentTime < lastRebalanceTimestamp + COOLDOWN) {
             revert CooldownNotElapsed();
         }
         bool valid = AllocationMaths.validateAllocation(
@@ -270,7 +265,7 @@ contract Rebalancer {
             revert MaxSingleMoveExceeded();
         }
 
-        lastRebalanceTimestamp = block.timestamp;
+        lastRebalanceTimestamp = currentTime;
         for (uint256 i = 0; i < proposal.protocolIds.length; i++) {
             CCIPHelpers.AdapterInstructions[]
                 memory _instructions = new CCIPHelpers.AdapterInstructions[](

@@ -13,7 +13,7 @@ import {NotRebalancer, SpokeNotFound} from "../../../src/errors/hubErrors.sol";
 contract RebalanceTest is BaseHubTest {
 
     function test_rebalance_sourceAdapterDecreases() public {
-        (MockYieldSource compoundAdapter, bytes32 COMPOUND) = _deployCompoundAdapter();
+        (, bytes32 COMPOUND) = _deployCompoundAdapter();
 
         _sendToSpoke(5_000e6);
         assertEq(aaveAdapter.totalAssets(), 5_000e6);

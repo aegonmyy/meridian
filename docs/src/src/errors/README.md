@@ -1,0 +1,23 @@
+
+
+# Contents
+- [NoActiveSpokes](hubErrors.sol/error.NoActiveSpokes.md)
+- [WithdrawalAlreadyPending](hubErrors.sol/error.WithdrawalAlreadyPending.md)
+- [InvalidMessageType](hubErrors.sol/error.InvalidMessageType.md)
+- [NoPendingWithdrawal](hubErrors.sol/error.NoPendingWithdrawal.md)
+- [InvalidConstructorArguments](hubErrors.sol/error.InvalidConstructorArguments.md)
+- [NotRebalancer](hubErrors.sol/error.NotRebalancer.md)
+- [NotSpoke](hubErrors.sol/error.NotSpoke.md)
+- [ZeroAddress](hubErrors.sol/error.ZeroAddress.md)
+- [InsufficientAssets](hubErrors.sol/error.InsufficientAssets.md)
+- [SpokeAlreadyRegistered](hubErrors.sol/error.SpokeAlreadyRegistered.md)
+- [SpokeNotFound](hubErrors.sol/error.SpokeNotFound.md)
+- [SpokeExists](hubErrors.sol/error.SpokeExists.md)
+- [ZeroWithdrawal](hubErrors.sol/error.ZeroWithdrawal.md)
+- [NoActiveAdapters](spokeErrors.sol/error.NoActiveAdapters.md)
+- [ZeroAddress](spokeErrors.sol/error.ZeroAddress.md)
+- [NotHub](spokeErrors.sol/error.NotHub.md)
+- [AdapterNotFound](spokeErrors.sol/error.AdapterNotFound.md)
+- [InvalidMessageType](spokeErrors.sol/error.InvalidMessageType.md)
+- [AmountCannotBeZero](spokeErrors.sol/error.AmountCannotBeZero.md)
+- [InvalidConstructorArguments](spokeErrors.sol/error.InvalidConstructorArguments.md)

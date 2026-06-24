@@ -34,37 +34,39 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///      forge test --match-contract FullFlowTest --fork-url $ETH_RPC_URL -vvv
 ///
 ///      Required env vars:
-///        ETH_RPC_URL      — Ethereum mainnet RPC
-///        ARBITRUM_RPC_URL — Arbitrum mainnet RPC
+///        ETH_RPC_URL     , Ethereum mainnet RPC
+///        ARBITRUM_RPC_URL, Arbitrum mainnet RPC
 contract FullFlowTest is Test {
-
     // =========================================================================
     // Chain Selectors
     // =========================================================================
-    uint64 constant ETH_SELECTOR      = 5009297550715157269;
+    uint64 constant ETH_SELECTOR = 5009297550715157269;
     uint64 constant ARBITRUM_SELECTOR = 4949039107694359620;
 
     // =========================================================================
-    // Mainnet Addresses — Ethereum
+    // Mainnet Addresses, Ethereum
     // =========================================================================
-    address constant ETH_CCIP_ROUTER  = 0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D;
-    address constant ETH_LINK         = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
-    address constant ETH_USDC         = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    address constant ETH_CCIP_ROUTER =
+        0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D;
+    address constant ETH_LINK = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
+    address constant ETH_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
     // =========================================================================
-    // Mainnet Addresses — Arbitrum
+    // Mainnet Addresses, Arbitrum
     // =========================================================================
-    address constant ARB_CCIP_ROUTER  = 0x141fa059441E0ca23ce184B6A78bafD2A517DdE8;
-    address constant ARB_LINK         = 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
-    address constant ARB_USDC         = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
-    address constant ARB_AAVE_POOL    = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
-    address constant ARB_AAVE_AUSDC   = 0x724dc807b04555b71ed48a6896b6F41593b8C637;
-    address constant ARB_COMPOUND     = 0xAec1F48e02Cfb822Be958B68C7957156EB3F0b6e;
+    address constant ARB_CCIP_ROUTER =
+        0x141fa059441E0ca23ce184B6A78bafD2A517DdE8;
+    address constant ARB_LINK = 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
+    address constant ARB_USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+    address constant ARB_AAVE_POOL = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
+    address constant ARB_AAVE_AUSDC =
+        0x724dc807b04555b71ed48a6896b6F41593b8C637;
+    address constant ARB_COMPOUND = 0xAec1F48e02Cfb822Be958B68C7957156EB3F0b6e;
 
     // =========================================================================
     // Protocol IDs
     // =========================================================================
-    bytes32 constant AAVE     = keccak256("AAVE");
+    bytes32 constant AAVE = keccak256("AAVE");
     bytes32 constant COMPOUND = keccak256("COMPOUND");
 
     // =========================================================================
@@ -72,11 +74,11 @@ contract FullFlowTest is Test {
     // =========================================================================
     CCIPLocalSimulatorFork public ccipSimulator;
 
-    HUB            public hub;
-    Rebalancer     public rebalancer;
-    AgentConsumer  public agentConsumer;
-    SpokeVault     public arbSpoke;
-    AaveAdapter    public arbAave;
+    HUB public hub;
+    Rebalancer public rebalancer;
+    AgentConsumer public agentConsumer;
+    SpokeVault public arbSpoke;
+    AaveAdapter public arbAave;
     compoundAdapter public arbCompound;
 
     // =========================================================================
@@ -105,7 +107,7 @@ contract FullFlowTest is Test {
         ethFork = vm.createSelectFork(vm.envString("ETH_RPC_URL"));
         arbFork = vm.createFork(vm.envString("ARBITRUM_RPC_URL"));
 
-        // deploy CCIP simulator — make persistent across forks
+        // deploy CCIP simulator, make persistent across forks
         ccipSimulator = new CCIPLocalSimulatorFork();
         vm.makePersistent(address(ccipSimulator));
 
@@ -127,7 +129,11 @@ contract FullFlowTest is Test {
         agentConsumer = new AgentConsumer(address(rebalancer), agent, owner);
 
         // redeploy rebalancer with real agentConsumer
-        rebalancer = new Rebalancer(address(hub), address(agentConsumer), owner);
+        rebalancer = new Rebalancer(
+            address(hub),
+            address(agentConsumer),
+            owner
+        );
         hub.setRebalancer(address(rebalancer));
 
         rebalancer.addChainToWhitelist(ARBITRUM_SELECTOR);
@@ -161,10 +167,10 @@ contract FullFlowTest is Test {
             ETH_SELECTOR
         );
 
-        arbAave     = new AaveAdapter(ARB_AAVE_POOL, ARB_AAVE_AUSDC, ARB_USDC);
+        arbAave = new AaveAdapter(ARB_AAVE_POOL, ARB_AAVE_AUSDC, ARB_USDC);
         arbCompound = new compoundAdapter(ARB_USDC, ARB_COMPOUND);
 
-        arbSpoke.setAdapter(AAVE,     address(arbAave));
+        arbSpoke.setAdapter(AAVE, address(arbAave));
         arbSpoke.setAdapter(COMPOUND, address(arbCompound));
         vm.stopPrank();
 
@@ -181,17 +187,17 @@ contract FullFlowTest is Test {
     }
 
     // =========================================================================
-    // Test 1 — Full deposit flow: hub → spoke → CONFIRM_RECEIPT → hub
+    // Test 1, Full deposit flow: hub → spoke → CONFIRM_RECEIPT → hub
     // =========================================================================
 
     function test_fullFlow_depositAndConfirm() public {
         vm.selectFork(ethFork);
 
         uint256 totalBefore = hub.totalAssets();
-        uint256 idleBefore  = IERC20(ETH_USDC).balanceOf(address(hub));
+        uint256 idleBefore = IERC20(ETH_USDC).balanceOf(address(hub));
 
-        // agent submits allocation — send 6_000 USDC (6000 bps) to Aave on Arbitrum
-        CCIPHelpers.AdapterInstructions[] memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
         instructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: AAVE,
             amount: 6_000e6,
@@ -202,37 +208,62 @@ contract FullFlowTest is Test {
         vm.prank(address(rebalancer));
         hub.sendToSpoke(ARBITRUM_SELECTOR, instructions);
 
-        // hub should have decremented idle and incremented inTransit
-        assertEq(IERC20(ETH_USDC).balanceOf(address(hub)), idleBefore - 6_000e6, "hub idle after send");
+        // exact, same block, no yield possible
+        assertEq(
+            IERC20(ETH_USDC).balanceOf(address(hub)),
+            idleBefore - 6_000e6,
+            "hub idle after send"
+        );
         assertEq(hub.inTransitAssets(), 6_000e6, "inTransit after send");
-        assertEq(hub.totalAssets(), totalBefore, "totalAssets unchanged during transit");
+        assertEq(
+            hub.totalAssets(),
+            totalBefore,
+            "totalAssets unchanged during transit"
+        );
 
-        console.log("CCIP message sent — routing to Arbitrum...");
+        console.log("CCIP message sent, routing to Arbitrum...");
 
         // route DEPOSIT message to Arbitrum
         vm.selectFork(arbFork);
         ccipSimulator.switchChainAndRouteMessage(arbFork);
 
-        // spoke should have deposited into Aave
+        // Aave aToken dust from real pool liquidity index, tolerance 1e6 (1 USDC)
         assertGt(arbAave.totalAssets(), 0, "Aave adapter received funds");
-        assertApproxEqAbs(arbAave.totalAssets(), 6_000e6, 100, "Aave adapter balance");
+        assertApproxEqAbs(
+            arbAave.totalAssets(),
+            6_000e6,
+            1e6,
+            "Aave adapter balance"
+        );
         console.log("Spoke deposited into Aave:", arbAave.totalAssets());
 
         // route CONFIRM_RECEIPT back to Ethereum
         vm.selectFork(ethFork);
         ccipSimulator.switchChainAndRouteMessage(ethFork);
 
-        // hub should have cleared inTransit and updated spokeBalances
         assertEq(hub.inTransitAssets(), 0, "inTransit cleared after confirm");
-        assertApproxEqAbs(hub.spokeBalances(ARBITRUM_SELECTOR), 6_000e6, 100, "spoke balance updated");
-        assertApproxEqAbs(hub.totalAssets(), totalBefore, 100, "totalAssets preserved after round trip");
+        assertApproxEqAbs(
+            hub.spokeBalances(ARBITRUM_SELECTOR),
+            6_000e6,
+            1e6,
+            "spoke balance updated"
+        );
+        assertApproxEqAbs(
+            hub.totalAssets(),
+            totalBefore,
+            1e6,
+            "totalAssets preserved after round trip"
+        );
 
-        console.log("Hub spokeBalances updated:", hub.spokeBalances(ARBITRUM_SELECTOR));
+        console.log(
+            "Hub spokeBalances updated:",
+            hub.spokeBalances(ARBITRUM_SELECTOR)
+        );
         console.log("Hub inTransitAssets:", hub.inTransitAssets());
     }
 
     // =========================================================================
-    // Test 2 — Full proposeAllocation flow via AgentConsumer → Rebalancer → Hub → Spoke
+    // Test 2, Full proposeAllocation flow via AgentConsumer → Rebalancer → Hub → Spoke
     // =========================================================================
 
     function test_fullFlow_proposeAllocation() public {
@@ -240,15 +271,14 @@ contract FullFlowTest is Test {
 
         uint256 totalAssets = hub.totalAssets(); // 10_000e6
 
-        // build allocation proposal — 6000 bps to Aave, 4000 bps to Compound on Arbitrum
         uint256[][] memory proposedAllocations = new uint256[][](1);
         proposedAllocations[0] = new uint256[](2);
-        proposedAllocations[0][0] = 6000; // AAVE — 60%
-        proposedAllocations[0][1] = 4000; // COMPOUND — 40%
+        proposedAllocations[0][0] = 6000; // AAVE, 60%
+        proposedAllocations[0][1] = 4000; // COMPOUND, 40%
 
         uint256[] memory proposedNetApys = new uint256[](2);
-        proposedNetApys[0] = 500; // 5% net APY for Aave
-        proposedNetApys[1] = 400; // 4% net APY for Compound
+        proposedNetApys[0] = 500;
+        proposedNetApys[1] = 400;
 
         uint256[][] memory currentAllocations = new uint256[][](1);
         currentAllocations[0] = new uint256[](2);
@@ -276,30 +306,40 @@ contract FullFlowTest is Test {
             protocolIds: protocolIds
         });
 
-        // warp past cooldown
         vm.warp(block.timestamp + 25 hours);
 
-        uint256 aaveExpected    = (6000 * totalAssets) / 10_000; // 6_000e6
+        uint256 aaveExpected = (6000 * totalAssets) / 10_000; // 6_000e6
         uint256 compoundExpected = (4000 * totalAssets) / 10_000; // 4_000e6
 
-        // agent submits via AgentConsumer
         vm.prank(agent);
         agentConsumer.proposeAllocation(proposal);
 
-        console.log("Proposal submitted — routing DEPOSIT messages...");
-        console.log("Expected Aave deposit:", aaveExpected);
-        console.log("Expected Compound deposit:", compoundExpected);
+        console.log("Proposal submitted, routing DEPOSIT messages...");
 
-        // hub sent two DEPOSIT messages — one for Aave, one for Compound
-        // proposeAllocation sends one message per chain with all instructions
-        assertEq(hub.inTransitAssets(), aaveExpected + compoundExpected, "inTransit = total sent");
+        // exact, set in same block
+        assertEq(
+            hub.inTransitAssets(),
+            aaveExpected + compoundExpected,
+            "inTransit = total sent"
+        );
 
         // route to Arbitrum
         vm.selectFork(arbFork);
         ccipSimulator.switchChainAndRouteMessage(arbFork);
 
-        assertApproxEqAbs(arbAave.totalAssets(),     aaveExpected,     100, "Aave received correct amount");
-        assertApproxEqAbs(arbCompound.totalAssets(), compoundExpected, 100, "Compound received correct amount");
+        // Aave aToken dust, 1e6 tolerance; Compound is exact, 100 fine
+        assertApproxEqAbs(
+            arbAave.totalAssets(),
+            aaveExpected,
+            1e6,
+            "Aave received correct amount"
+        );
+        assertApproxEqAbs(
+            arbCompound.totalAssets(),
+            compoundExpected,
+            100,
+            "Compound received correct amount"
+        );
         console.log("Aave adapter balance:", arbAave.totalAssets());
         console.log("Compound adapter balance:", arbCompound.totalAssets());
 
@@ -311,22 +351,33 @@ contract FullFlowTest is Test {
         assertApproxEqAbs(
             hub.spokeBalances(ARBITRUM_SELECTOR),
             aaveExpected + compoundExpected,
-            100,
+            1e6,
             "spoke balance = total deployed"
         );
-        assertApproxEqAbs(hub.totalAssets(), totalAssets, 100, "totalAssets preserved");
+        assertApproxEqAbs(
+            hub.totalAssets(),
+            totalAssets,
+            1e6,
+            "totalAssets preserved"
+        );
 
-        console.log("Final hub spokeBalances:", hub.spokeBalances(ARBITRUM_SELECTOR));
+        console.log(
+            "Final hub spokeBalances:",
+            hub.spokeBalances(ARBITRUM_SELECTOR)
+        );
     }
 
     // =========================================================================
-    // Test 3 — Intra-spoke rebalance: Aave → Compound on Arbitrum
+    // Test 3, Intra-spoke rebalance: Aave → Compound on Arbitrum
     // =========================================================================
 
     function test_fullFlow_rebalance() public {
         // first deposit into Aave
         vm.selectFork(ethFork);
-        CCIPHelpers.AdapterInstructions[] memory depositInstructions = new CCIPHelpers.AdapterInstructions[](1);
+        CCIPHelpers.AdapterInstructions[]
+            memory depositInstructions = new CCIPHelpers.AdapterInstructions[](
+                1
+            );
         depositInstructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: AAVE,
             amount: 6_000e6,
@@ -343,12 +394,13 @@ contract FullFlowTest is Test {
 
         console.log("Initial Aave balance:", arbAave.totalAssets());
 
-        // warp past cooldown
         vm.warp(block.timestamp + 25 hours);
 
-        // rebalance 2_000 from Aave to Compound
         bytes32 messageId = keccak256(abi.encode(block.timestamp));
-        CCIPHelpers.AdapterInstructions[] memory rebalanceInstructions = new CCIPHelpers.AdapterInstructions[](1);
+        CCIPHelpers.AdapterInstructions[]
+            memory rebalanceInstructions = new CCIPHelpers.AdapterInstructions[](
+                1
+            );
         rebalanceInstructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: AAVE,
             amount: 2_000e6,
@@ -359,34 +411,59 @@ contract FullFlowTest is Test {
         vm.prank(address(rebalancer));
         hub.rebalance(ARBITRUM_SELECTOR, rebalanceInstructions, messageId);
 
-        // no tokens should have left hub
+        // rebalance never touches inTransit, exact
         assertEq(hub.inTransitAssets(), 0, "inTransit stays 0 for rebalance");
 
         // route REBALANCE to Arbitrum
         vm.selectFork(arbFork);
         ccipSimulator.switchChainAndRouteMessage(arbFork);
 
-        assertApproxEqAbs(arbAave.totalAssets(),     4_000e6, 100, "Aave decreased by 2_000");
-        assertApproxEqAbs(arbCompound.totalAssets(), 2_000e6, 100, "Compound increased by 2_000");
-        console.log("After rebalance — Aave:", arbAave.totalAssets(), "Compound:", arbCompound.totalAssets());
+        // Aave may have accrued yield, 1e6 tolerance; Compound balance is exact, 100 fine
+        assertApproxEqAbs(
+            arbAave.totalAssets(),
+            4_000e6,
+            1e6,
+            "Aave decreased by 2_000"
+        );
+        assertApproxEqAbs(
+            arbCompound.totalAssets(),
+            2_000e6,
+            100,
+            "Compound increased by 2_000"
+        );
+        console.log(
+            "After rebalance, Aave:",
+            arbAave.totalAssets(),
+            "Compound:",
+            arbCompound.totalAssets()
+        );
 
         // route CONFIRM_REBALANCE back to Ethereum
         vm.selectFork(ethFork);
         ccipSimulator.switchChainAndRouteMessage(ethFork);
 
-        // spoke balance unchanged — same total just different split
-        assertApproxEqAbs(hub.spokeBalances(ARBITRUM_SELECTOR), 6_000e6, 100, "spoke total unchanged");
-        console.log("Hub spoke balance after rebalance:", hub.spokeBalances(ARBITRUM_SELECTOR));
+        // spoke total unchanged, yield may have accrued, 1e6 tolerance
+        assertApproxEqAbs(
+            hub.spokeBalances(ARBITRUM_SELECTOR),
+            6_000e6,
+            1e6,
+            "spoke total unchanged"
+        );
+        console.log(
+            "Hub spoke balance after rebalance:",
+            hub.spokeBalances(ARBITRUM_SELECTOR)
+        );
     }
 
     // =========================================================================
-    // Test 4 — Path 3 withdrawal: idle insufficient → recall from spoke
+    // Test 4, Path 3 withdrawal: idle insufficient → recall from spoke
     // =========================================================================
 
     function test_fullFlow_path3Withdrawal() public {
-        // deploy 9_000 to spoke — only 1_000 idle remains
+        // deploy 9_000 to spoke, only 1_000 idle remains
         vm.selectFork(ethFork);
-        CCIPHelpers.AdapterInstructions[] memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
         instructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: AAVE,
             amount: 9_000e6,
@@ -401,9 +478,11 @@ contract FullFlowTest is Test {
         vm.selectFork(ethFork);
         ccipSimulator.switchChainAndRouteMessage(ethFork);
 
-        // set fresh report timestamp so _allSpokesFresh passes
-        // (CCIP simulator sets it — just confirm)
-        assertGt(hub.lastReportTimestamp(ARBITRUM_SELECTOR), 0, "report timestamp set");
+        assertGt(
+            hub.lastReportTimestamp(ARBITRUM_SELECTOR),
+            0,
+            "report timestamp set"
+        );
 
         uint256 aliceShares = hub.balanceOf(alice);
         uint256 aliceAssets = hub.previewRedeem(aliceShares);
@@ -413,30 +492,26 @@ contract FullFlowTest is Test {
         console.log("Alice assets:", aliceAssets);
         console.log("Hub idle:", idleBalance);
 
-        // alice withdraws — idle (1_000) < assets (10_000) → Path 3
+        // alice withdraws, idle (1_000) < assets (10_000) → Path 3
         vm.prank(alice);
         hub.redeem(aliceShares, alice, alice);
 
-        // hub should have sent WITHDRAW_AMOUNT to spoke
-        console.log("Withdrawal queued — routing recall to Arbitrum...");
+        console.log("Withdrawal queued, routing recall to Arbitrum...");
 
         // route WITHDRAW_AMOUNT to Arbitrum
         vm.selectFork(arbFork);
         ccipSimulator.switchChainAndRouteMessage(arbFork);
 
-        // spoke withdrew from Aave — check adapter decreased
-        uint256 spokeAaveAfter = arbAave.totalAssets();
-        console.log("Arbitrum Aave after recall:", spokeAaveAfter);
+        console.log("Arbitrum Aave after recall:", arbAave.totalAssets());
 
-        // route CONFIRM_WITHDRAWAL back to Ethereum — triggers settlement
+        // route CONFIRM_WITHDRAWAL back to Ethereum, triggers settlement
         vm.selectFork(ethFork);
         ccipSimulator.switchChainAndRouteMessage(ethFork);
 
-        // alice should have received her USDC
-        assertApproxEqAbs(
+        // previewRedeem == actual transfer, no rounding between them, exact
+        assertEq(
             IERC20(ETH_USDC).balanceOf(alice),
             aliceAssets,
-            100,
             "alice received correct USDC"
         );
         assertEq(hub.balanceOf(alice), 0, "alice shares burned");
@@ -448,17 +523,16 @@ contract FullFlowTest is Test {
     }
 
     // =========================================================================
-    // Test 5 — Accounting invariant holds throughout full flow
+    // Test 5, Accounting invariant holds throughout full flow
     // =========================================================================
 
     function test_fullFlow_accountingInvariant() public {
         vm.selectFork(ethFork);
 
-        // identity: totalAssets == idle + inTransit + spokeBalances
         _assertAccountingIdentity("initial");
 
-        // deposit to spoke
-        CCIPHelpers.AdapterInstructions[] memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
         instructions[0] = CCIPHelpers.AdapterInstructions({
             adapter: AAVE,
             amount: 5_000e6,
@@ -485,10 +559,10 @@ contract FullFlowTest is Test {
 
     function _assertAccountingIdentity(string memory label) internal {
         vm.selectFork(ethFork);
-        uint256 idle         = IERC20(ETH_USDC).balanceOf(address(hub));
-        uint256 inTransit    = hub.inTransitAssets();
+        uint256 idle = IERC20(ETH_USDC).balanceOf(address(hub));
+        uint256 inTransit = hub.inTransitAssets();
         uint256 spokeBalance = hub.spokeBalances(ARBITRUM_SELECTOR);
-        uint256 total        = hub.totalAssets();
+        uint256 total = hub.totalAssets();
 
         console.log(label);
         console.log("  idle:", idle);
@@ -496,10 +570,11 @@ contract FullFlowTest is Test {
         console.log("  spokeBalance:", spokeBalance);
         console.log("  totalAssets:", total);
 
+        // Aave yield drift, 1e6 tolerance
         assertApproxEqAbs(
             total,
             idle + inTransit + spokeBalance,
-            100,
+            1e6,
             string.concat("accounting identity: ", label)
         );
     }

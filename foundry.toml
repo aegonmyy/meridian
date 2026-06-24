@@ -2,9 +2,10 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+# via-ir = true
 
 [invariant]
-runs = 150
-depth = 10
+runs = 100
+depth = 150
 fail_on_revert = true
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

@@ -9,8 +9,6 @@ out/
 
 # Docs
 docs/
-lib/chainlink-local
-lib/
 
 .env
 doc.md

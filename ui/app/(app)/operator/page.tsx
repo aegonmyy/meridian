@@ -576,6 +576,120 @@ export default function OperatorPage() {
           </Card>
         </div>
 
+        {/* ── CCIP Transfer Status ─────────────────────────────────────── */}
+        {/* Polls the CCIP Explorer API for all messages sent from the Hub.
+            State 0=Untouched, 1=In Progress, 2=Success, 3=Failure.
+            FAILURE means the spoke received the message but execution reverted —
+            tokens sit in the OffRamp until manually executed or abandoned. */}
+        <Card>
+          <CardHeader>
+            <CardTitle style={{ color: "var(--color-text)", fontWeight: 600, fontSize: "0.875rem" }}>
+              CCIP Transfer Status
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              {ccipLoading && <Badge variant="gray">Syncing…</Badge>}
+              {!ccipLoading && <Badge variant="gray">{ccipMessages.length} messages</Badge>}
+              <button
+                onClick={() => refetchCcip()}
+                className="text-xs px-2 py-1 rounded-lg"
+                style={{ background: "var(--color-bg)", color: "var(--color-muted)", border: "1px solid var(--color-border)" }}
+              >
+                Refresh
+              </button>
+            </div>
+          </CardHeader>
+
+          {ccipError && (
+            <div className="rounded-xl px-3 py-2.5 text-xs mb-3" style={{ background: "#fef3c7", color: "#92400e" }}>
+              CCIP Explorer unavailable: {ccipError} —{" "}
+              <a
+                href={`https://ccip.chain.link/address/${CONTRACTS.hub.address}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{ textDecoration: "underline" }}
+              >
+                view manually
+              </a>
+            </div>
+          )}
+
+          {ccipMessages.length === 0 && !ccipLoading && !ccipError ? (
+            <p className="text-xs" style={{ color: "var(--color-muted)" }}>
+              No messages found for Hub address. Messages appear once Hub sends to a spoke.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {ccipMessages.map((msg: CcipMessage) => {
+                const usdcAmount = msg.tokenAmounts?.[0]?.amount;
+                const usdc = usdcAmount ? (Number(usdcAmount) / 1e6).toFixed(2) : null;
+                const stateLabel = CCIP_STATE_LABELS[msg.state] ?? "Unknown";
+                const stateVariant = CCIP_STATE_VARIANTS[msg.state] ?? "gray";
+                const explorerUrl = `https://ccip.chain.link/msg/${msg.messageId}`;
+                return (
+                  <div
+                    key={msg.messageId}
+                    className="rounded-xl px-3 py-2.5 flex items-start justify-between gap-3 text-xs"
+                    style={{ background: "var(--color-bg)" }}
+                  >
+                    <div className="flex flex-col gap-1 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-mono text-xs truncate" style={{ color: "var(--color-subtle)" }}>
+                          {msg.messageId.slice(0, 10)}…{msg.messageId.slice(-6)}
+                        </span>
+                        <span className="shrink-0" style={{ color: "var(--color-muted)" }}>→ {chainName(msg.destNetworkName)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {usdc && (
+                          <span className="font-semibold" style={{ color: "var(--color-text)" }}>${usdc} USDC</span>
+                        )}
+                        <span style={{ color: "var(--color-muted)" }}>
+                          {msg.sendTimestamp ? new Date(msg.sendTimestamp).toLocaleTimeString() : ""}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant={stateVariant}>{stateLabel}</Badge>
+                      <a
+                        href={explorerUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={msg.state === 3 ? "Open CCIP Explorer → click 'Execute manually' to retry" : "View on CCIP Explorer"}
+                        className="text-xs px-2 py-1 rounded-lg"
+                        style={{
+                          background: msg.state === 3 ? "var(--color-error-bg, #fee)" : "var(--color-surface)",
+                          color: msg.state === 3 ? "#dc2626" : "var(--color-primary)",
+                          border: `1px solid ${msg.state === 3 ? "#fca5a5" : "var(--color-border)"}`,
+                        }}
+                      >
+                        {msg.state === 3 ? "Retry ↗" : "Explorer ↗"}
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {ccipMessages.some((m: CcipMessage) => m.state === 3) && (
+            <p className="mt-2 text-xs px-1" style={{ color: "var(--color-muted)" }}>
+              <strong style={{ color: "#dc2626" }}>Failure:</strong> Click <strong>Retry ↗</strong> → CCIP Explorer will show an &ldquo;Execute manually&rdquo; button that re-submits the message to the OffRamp on the destination chain. After all messages are confirmed failed/unrecoverable, use the Recovery panel below to zero out <code>inTransitAssets</code>.
+            </p>
+          )}
+
+          <div className="mt-3 text-xs" style={{ color: "var(--color-muted)" }}>
+            Polls every 30s · Hub: <span className="font-mono">{CONTRACTS.hub.address.slice(0, 10)}…</span>
+            {" · "}
+            <a
+              href={`https://ccip.chain.link/address/${CONTRACTS.hub.address}`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "var(--color-primary)", textDecoration: "underline" }}
+            >
+              View all on CCIP Explorer
+            </a>
+          </div>
+        </Card>
+
         {/* ── Rebalancer: whitelist status ──────────────────────────────── */}
         <Card>
           <CardHeader>
@@ -621,10 +735,15 @@ export default function OperatorPage() {
               </div>
             </div>
           </div>
-          <div className="mt-3 text-xs" style={{ color: "var(--color-muted)" }}>
-            Owner: <span className="font-mono" style={{ color: "var(--color-text)" }}>{rebalancerOwner ?? "—"}</span>
-            {" · "}
-            Agent: <span className="font-mono" style={{ color: "var(--color-text)" }}>{agentConsumerAddr ?? "—"}</span>
+          <div className="mt-3 flex flex-col gap-1 text-xs" style={{ color: "var(--color-muted)" }}>
+            <div className="flex items-center gap-1 min-w-0">
+              <span className="shrink-0">Owner:</span>
+              <span className="font-mono truncate" style={{ color: "var(--color-text)" }}>{rebalancerOwner ?? "—"}</span>
+            </div>
+            <div className="flex items-center gap-1 min-w-0">
+              <span className="shrink-0">Agent:</span>
+              <span className="font-mono truncate" style={{ color: "var(--color-text)" }}>{agentConsumerAddr ?? "—"}</span>
+            </div>
           </div>
         </Card>
 
@@ -724,126 +843,12 @@ export default function OperatorPage() {
               </p>
               <div className="rounded-xl px-3 py-2.5 text-xs" style={{ background: "var(--color-bg)" }}>
                 <span style={{ color: "var(--color-muted)" }}>Agent EOA: </span>
-                <span className="font-mono" style={{ color: "var(--color-text)" }}>
+                <span className="font-mono break-all" style={{ color: "var(--color-text)" }}>
                   {agentEOA ?? "Loading…"}
                 </span>
               </div>
             </div>
           )}
-        </Card>
-
-        {/* ── CCIP Transfer Status ─────────────────────────────────────── */}
-        {/* Polls the CCIP Explorer API for all messages sent from the Hub.
-            State 0=Untouched, 1=In Progress, 2=Success, 3=Failure.
-            FAILURE means the spoke received the message but execution reverted —
-            tokens sit in the OffRamp until manually executed or abandoned. */}
-        <Card>
-          <CardHeader>
-            <CardTitle style={{ color: "var(--color-text)", fontWeight: 600, fontSize: "0.875rem" }}>
-              CCIP Transfer Status
-            </CardTitle>
-            <div className="flex items-center gap-2">
-              {ccipLoading && <Badge variant="gray">Syncing…</Badge>}
-              {!ccipLoading && <Badge variant="gray">{ccipMessages.length} messages</Badge>}
-              <button
-                onClick={() => refetchCcip()}
-                className="text-xs px-2 py-1 rounded-lg"
-                style={{ background: "var(--color-bg)", color: "var(--color-muted)", border: "1px solid var(--color-border)" }}
-              >
-                Refresh
-              </button>
-            </div>
-          </CardHeader>
-
-          {ccipError && (
-            <div className="rounded-xl px-3 py-2.5 text-xs mb-3" style={{ background: "#fef3c7", color: "#92400e" }}>
-              CCIP Explorer unavailable: {ccipError} —{" "}
-              <a
-                href={`https://ccip.chain.link/address/${CONTRACTS.hub.address}`}
-                target="_blank"
-                rel="noreferrer"
-                style={{ textDecoration: "underline" }}
-              >
-                view manually
-              </a>
-            </div>
-          )}
-
-          {ccipMessages.length === 0 && !ccipLoading && !ccipError ? (
-            <p className="text-xs" style={{ color: "var(--color-muted)" }}>
-              No messages found for Hub address. Messages appear once Hub sends to a spoke.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {ccipMessages.map((msg: CcipMessage) => {
-                const usdcAmount = msg.tokenAmounts?.[0]?.amount;
-                const usdc = usdcAmount ? (Number(usdcAmount) / 1e6).toFixed(2) : null;
-                const stateLabel = CCIP_STATE_LABELS[msg.state] ?? "Unknown";
-                const stateVariant = CCIP_STATE_VARIANTS[msg.state] ?? "gray";
-                const explorerUrl = `https://ccip.chain.link/msg/${msg.messageId}`;
-                return (
-                  <div
-                    key={msg.messageId}
-                    className="rounded-xl px-3 py-2.5 flex items-start justify-between gap-3 text-xs"
-                    style={{ background: "var(--color-bg)" }}
-                  >
-                    <div className="flex flex-col gap-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs" style={{ color: "var(--color-subtle)" }}>
-                          {msg.messageId.slice(0, 10)}…{msg.messageId.slice(-6)}
-                        </span>
-                        <span style={{ color: "var(--color-muted)" }}>→ {chainName(msg.destNetworkName)}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {usdc && (
-                          <span className="font-semibold" style={{ color: "var(--color-text)" }}>${usdc} USDC</span>
-                        )}
-                        <span style={{ color: "var(--color-muted)" }}>
-                          {msg.sendTimestamp ? new Date(msg.sendTimestamp).toLocaleTimeString() : ""}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Badge variant={stateVariant}>{stateLabel}</Badge>
-                      <a
-                        href={explorerUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={msg.state === 3 ? "Open CCIP Explorer → click 'Execute manually' to retry" : "View on CCIP Explorer"}
-                        className="text-xs px-2 py-1 rounded-lg"
-                        style={{
-                          background: msg.state === 3 ? "var(--color-error-bg, #fee)" : "var(--color-surface)",
-                          color: msg.state === 3 ? "#dc2626" : "var(--color-primary)",
-                          border: `1px solid ${msg.state === 3 ? "#fca5a5" : "var(--color-border)"}`,
-                        }}
-                      >
-                        {msg.state === 3 ? "Retry ↗" : "Explorer ↗"}
-                      </a>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {ccipMessages.some((m: CcipMessage) => m.state === 3) && (
-            <p className="mt-2 text-xs px-1" style={{ color: "var(--color-muted)" }}>
-              <strong style={{ color: "#dc2626" }}>Failure:</strong> Click <strong>Retry ↗</strong> → CCIP Explorer will show an &ldquo;Execute manually&rdquo; button that re-submits the message to the OffRamp on the destination chain. After all messages are confirmed failed/unrecoverable, use the Recovery panel below to zero out <code>inTransitAssets</code>.
-            </p>
-          )}
-
-          <div className="mt-3 text-xs" style={{ color: "var(--color-muted)" }}>
-            Polls every 30s · Hub: <span className="font-mono">{CONTRACTS.hub.address.slice(0, 10)}…</span>
-            {" · "}
-            <a
-              href={`https://ccip.chain.link/address/${CONTRACTS.hub.address}`}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: "var(--color-primary)", textDecoration: "underline" }}
-            >
-              View all on CCIP Explorer
-            </a>
-          </div>
         </Card>
 
         {/* ── Recovery: adjust inTransitAssets ─────────────────────────── */}
@@ -1009,7 +1014,7 @@ export default function OperatorPage() {
           <div className="flex flex-col gap-4">
             <div className="rounded-xl px-3 py-2" style={{ background: "var(--color-bg)" }}>
               <p className="text-xs" style={{ color: "var(--color-muted)" }}>Current</p>
-              <p className="text-xs font-mono mt-0.5" style={{ color: "var(--color-text)" }}>
+              <p className="text-xs font-mono mt-0.5 break-all" style={{ color: "var(--color-text)" }}>
                 {currentRebalancer ?? "—"}
               </p>
             </div>
@@ -1104,7 +1109,7 @@ export default function OperatorPage() {
             {setAdapterProtocol && setAdapterInfo && (
               <div className="rounded-xl px-3 py-2" style={{ background: "var(--color-bg)" }}>
                 <p className="text-xs" style={{ color: "var(--color-muted)" }}>Current adapter</p>
-                <p className="text-xs font-mono mt-0.5" style={{ color: "var(--color-text)" }}>
+                <p className="text-xs font-mono mt-0.5 break-all" style={{ color: "var(--color-text)" }}>
                   {setAdapterInfo[1]
                     ? setAdapterInfo[0]
                     : "Not registered"}

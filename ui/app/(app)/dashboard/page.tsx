@@ -132,9 +132,13 @@ export default function DashboardPage() {
     query: { enabled: userShares !== undefined },
   });
 
-  const sharePrice =
-    totalAssets && totalSupply && totalSupply > 0n
-      ? Number((totalAssets * 10n ** 6n) / totalSupply) / 1_000_000
+  // Both totalAssets and totalSupply are 6-decimal (Hub.decimals() = 6 = USDC decimals).
+  // When totalSupply = 0, show the initial/base price of 1.000000 (no shares minted yet).
+  const sharePrice: number | null =
+    totalAssets !== undefined && totalSupply !== undefined
+      ? totalSupply === 0n
+        ? 1.0
+        : Number(totalAssets) / Number(totalSupply)
       : null;
 
   const reservedFormatted = reservedAssets ? formatUSD(reservedAssets) : "—";

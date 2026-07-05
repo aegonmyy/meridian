@@ -17,7 +17,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className="flex flex-col w-60 shrink-0 h-screen sticky top-0 border-r py-6 px-4"
+      className="hidden md:flex flex-col w-60 shrink-0 h-screen sticky top-0 border-r py-6 px-4"
       style={{ background: "var(--color-card)", borderColor: "var(--color-border)" }}
     >
       {/* Logo */}

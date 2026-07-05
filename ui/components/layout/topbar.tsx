@@ -18,31 +18,50 @@ export function Topbar({ title }: { title: string }) {
 
   return (
     <header
-      className="flex items-center justify-between h-16 px-8 border-b shrink-0"
+      className="flex items-center justify-between h-16 px-4 sm:px-8 border-b shrink-0"
       style={{ background: "var(--color-card)", borderColor: "var(--color-border)" }}
     >
-      <h1 className="text-lg font-semibold" style={{ color: "var(--color-text)" }}>
+      {/* Logo — only visible on mobile where sidebar is hidden */}
+      <div className="flex items-center gap-2 md:hidden">
+        <div
+          className="h-7 w-7 rounded-lg flex items-center justify-center text-white text-xs font-bold"
+          style={{ background: "var(--color-primary)" }}
+        >
+          M
+        </div>
+        <span className="font-semibold text-sm" style={{ color: "var(--color-text)" }}>
+          Meridian
+        </span>
+      </div>
+
+      {/* Page title — only on desktop where sidebar provides the brand */}
+      <h1 className="hidden md:block text-lg font-semibold" style={{ color: "var(--color-text)" }}>
         {title}
       </h1>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         {isConnected && onWrongChain && (
           <Button
             variant="ghost"
             size="sm"
             onClick={() => switchChain({ chainId: sepolia.id })}
-            className="text-orange-600 border-orange-200"
+            className="text-orange-600 border-orange-200 text-xs"
           >
-            Switch to Sepolia
+            Wrong network
           </Button>
         )}
         {isConnected ? (
           <>
-            <Badge variant="green">
+            <Badge variant="green" className="hidden sm:flex">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />
               {shortenAddress(address!)}
             </Badge>
-            <Button variant="ghost" size="sm" onClick={() => disconnect()}>
+            {/* Compact address on mobile */}
+            <span className="flex sm:hidden text-xs font-mono font-medium px-2 py-1 rounded-lg"
+              style={{ background: "var(--color-bg)", color: "var(--color-text)" }}>
+              {shortenAddress(address!)}
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => disconnect()} className="hidden sm:flex">
               Disconnect
             </Button>
           </>
@@ -51,7 +70,8 @@ export function Topbar({ title }: { title: string }) {
             size="sm"
             onClick={() => connect({ connector: injected() })}
           >
-            Connect Wallet
+            <span className="hidden sm:inline">Connect Wallet</span>
+            <span className="sm:hidden">Connect</span>
           </Button>
         )}
       </div>

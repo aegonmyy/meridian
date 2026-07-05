@@ -20,7 +20,6 @@ import {
   CONTRACTS, HUB_ABI, SPOKE_ABI, REBALANCER_ABI, AGENT_CONSUMER_ABI,
   CHAIN_SELECTORS, SELECTOR_LABELS, PROTOCOL_IDS, PROTOCOL_LABELS,
 } from "@/lib/contracts";
-import { formatPct } from "@/lib/utils";
 import { parseHubError } from "@/lib/hub-errors";
 import { parseSpokeError } from "@/lib/spoke-errors";
 import { parseRebalancerError } from "@/lib/rebalancer-errors";
@@ -32,22 +31,22 @@ import {
 import { useSpokeAdapterEvents } from "@/hooks/use-spoke-events";
 import { useRebalancerEvents } from "@/hooks/use-rebalancer-events";
 import { useLastProposal, useWatchAllocationProposed } from "@/hooks/use-agent-consumer-events";
+import {
+  useCcipMessages,
+  CCIP_STATE_LABELS,
+  CCIP_STATE_VARIANTS,
+  type CcipMessage,
+} from "@/hooks/use-ccip-messages";
 
-/* ── Cooldown timer ──────────────────────────────────────────────────────── */
-function CooldownTimer({ lastRebalance, cooldown }: { lastRebalance?: bigint; cooldown?: bigint }) {
-  const [now, setNow] = useState(Math.floor(Date.now() / 1000));
-  useEffect(() => {
-    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  if (!lastRebalance || !cooldown) return <Badge variant="gray">Loading…</Badge>;
-  const remaining = Math.max(0, Number(lastRebalance) + Number(cooldown) - now);
-  if (remaining === 0) return <Badge variant="green">Ready to rebalance</Badge>;
-  const h = Math.floor(remaining / 3600).toString().padStart(2, "0");
-  const m = Math.floor((remaining % 3600) / 60).toString().padStart(2, "0");
-  const s = (remaining % 60).toString().padStart(2, "0");
-  return <Badge variant="orange">Cooldown: {h}:{m}:{s}</Badge>;
+/* ── CCIP chain name helper ──────────────────────────────────────────────── */
+function chainName(selector: string): string {
+  const labels: Record<string, string> = {
+    "3478487238524512106":  "Arb Sepolia",
+    "10344971235874465080": "Base Sepolia",
+    "5224473277236331295":  "OP Sepolia",
+    "16015286601757825753": "Sepolia",
+  };
+  return labels[selector] ?? selector.slice(0, 10) + "…";
 }
 
 /* ── Shared field wrapper ────────────────────────────────────────────────── */
@@ -165,6 +164,14 @@ export default function OperatorPage() {
   const [wlAddProtocol, setWlAddProtocol] = useState("");
   const [wlRemoveProtocol, setWlRemoveProtocol] = useState("");
 
+  /* ── Recovery inputs ───────────────────────────────────────────────────── */
+  const [adjustAmount, setAdjustAmount] = useState("");
+  const [newGasLimit, setNewGasLimit] = useState("");
+
+  /* ── CCIP message tracking ─────────────────────────────────────────────── */
+  const { messages: ccipMessages, loading: ccipLoading, error: ccipError, refetch: refetchCcip } =
+    useCcipMessages(CONTRACTS.hub.address);
+
   // Hub + Spoke + Rebalancer errors all feed the same ErrorModal
   function onError(err: unknown) {
     const info = parseHubError(err) ?? parseSpokeError(err) ?? parseRebalancerError(err);
@@ -185,7 +192,7 @@ export default function OperatorPage() {
   useSpokeAdapterEvents(push);
 
   /* ── Rebalancer event watchers (Sepolia) ───────────────────────────────── */
-  useRebalancerEvents(push, () => { refetchWlArbChain(); refetchWlBaseChain(); refetchWlAave(); refetchWlCompound(); refetchWlMorpho(); }, () => refetchLastRebalance());
+  useRebalancerEvents(push, () => { refetchWlArbChain(); refetchWlBaseChain(); refetchWlAave(); refetchWlCompound(); refetchWlMorpho(); }, () => {});
 
   /* ── AgentConsumer event watchers (Sepolia) ────────────────────────────── */
   // AllocationProposed fires when the off-chain agent's proposal passes all Rebalancer guards.
@@ -199,28 +206,6 @@ export default function OperatorPage() {
   });
 
   /* ── Contract reads ────────────────────────────────────────────────────── */
-  const { data: lastRebalance, refetch: refetchLastRebalance } = useReadContract({
-    address: CONTRACTS.rebalancer.address,
-    abi: REBALANCER_ABI,
-    functionName: "lastRebalanceTimestamp",
-    chainId: sepolia.id,
-    query: { refetchInterval: 30_000 },
-  });
-
-  const { data: cooldown } = useReadContract({
-    address: CONTRACTS.rebalancer.address,
-    abi: REBALANCER_ABI,
-    functionName: "COOLDOWN",
-    chainId: sepolia.id,
-  });
-
-  const { data: maxMoveBps } = useReadContract({
-    address: CONTRACTS.rebalancer.address,
-    abi: REBALANCER_ABI,
-    functionName: "MAX_SINGLE_MOVE_BPS",
-    chainId: sepolia.id,
-  });
-
   const { data: rebalancerOwner } = useReadContract({
     address: CONTRACTS.rebalancer.address,
     abi: REBALANCER_ABI,
@@ -295,6 +280,21 @@ export default function OperatorPage() {
     chainId: sepolia.id,
   });
 
+  // Hub accounting — inTransitAssets and configurable gas limit
+  const { data: inTransitAssets, refetch: refetchInTransit } = useReadContract({
+    address: CONTRACTS.hub.address,
+    abi: HUB_ABI,
+    functionName: "inTransitAssets",
+    chainId: sepolia.id,
+    query: { refetchInterval: 20_000 },
+  });
+  const { data: currentGasLimit, refetch: refetchGasLimit } = useReadContract({
+    address: CONTRACTS.hub.address,
+    abi: HUB_ABI,
+    functionName: "outboundGasLimit",
+    chainId: sepolia.id,
+  });
+
   // Spoke check: isValidSpoke for arbSpoke address
   const { data: arbSpokeValid } = useReadContract({
     address: CONTRACTS.hub.address,
@@ -317,6 +317,9 @@ export default function OperatorPage() {
   const { writeContract: removeChainWlFn,  isPending: isRemovingChainWl  } = useWriteContract();
   const { writeContract: addProtoWlFn,     isPending: isAddingProtoWl    } = useWriteContract();
   const { writeContract: removeProtoWlFn,  isPending: isRemovingProtoWl  } = useWriteContract();
+  // Recovery writes (onlyOwner Hub functions)
+  const { writeContract: adjustTransitFn,  isPending: isAdjusting        } = useWriteContract();
+  const { writeContract: setGasLimitFn,    isPending: isSettingGas       } = useWriteContract();
 
   const { isSuccess: rebalancerSet } = useWaitForTransactionReceipt({ hash: setRebalancerTxHash });
   useEffect(() => { if (rebalancerSet) { refetchRebalancer(); setRebalancerAddr(""); } }, [rebalancerSet, refetchRebalancer]);
@@ -487,10 +490,48 @@ export default function OperatorPage() {
     );
   }
 
-  const isReady =
-    lastRebalance && cooldown
-      ? BigInt(Math.floor(Date.now() / 1000)) >= lastRebalance + cooldown
-      : false;
+  function handleAdjustInTransit() {
+    if (!adjustAmount) return;
+    const rawAmount = BigInt(Math.round(parseFloat(adjustAmount) * 1e6));
+    adjustTransitFn(
+      {
+        address: CONTRACTS.hub.address,
+        abi: HUB_ABI,
+        functionName: "adjustInTransitAssets",
+        args: [rawAmount],
+        chainId: sepolia.id,
+      },
+      {
+        onError,
+        onSuccess: () => {
+          push({ variant: "success", title: "inTransitAssets adjusted", body: `New value: ${adjustAmount} USDC` });
+          setAdjustAmount("");
+          setTimeout(() => refetchInTransit(), 3000);
+        },
+      }
+    );
+  }
+
+  function handleSetGasLimit() {
+    if (!newGasLimit) return;
+    setGasLimitFn(
+      {
+        address: CONTRACTS.hub.address,
+        abi: HUB_ABI,
+        functionName: "setOutboundGasLimit",
+        args: [Number(newGasLimit)],
+        chainId: sepolia.id,
+      },
+      {
+        onError,
+        onSuccess: () => {
+          push({ variant: "success", title: "Gas limit updated", body: `New limit: ${Number(newGasLimit).toLocaleString()}` });
+          setNewGasLimit("");
+          setTimeout(() => refetchGasLimit(), 3000);
+        },
+      }
+    );
+  }
 
   // Pre-flight checks for the intra-spoke rebalance form
   const rebalancePreflight = (() => {
@@ -507,7 +548,6 @@ export default function OperatorPage() {
     if (sourceWl === false) return `${PROTOCOL_LABELS[rebalSource] ?? "Source protocol"} is not whitelisted (ProtocolNotWhitelisted)`;
     const targetWl = rebalTarget === PROTOCOL_IDS.AAVE ? wlAave : rebalTarget === PROTOCOL_IDS.COMPOUND ? wlCompound : rebalTarget === PROTOCOL_IDS.MORPHO ? wlMorpho : undefined;
     if (targetWl === false) return `${PROTOCOL_LABELS[rebalTarget] ?? "Target protocol"} is not whitelisted (ProtocolNotWhitelisted)`;
-    if (!isReady) return "Cooldown not elapsed — wait for timer to reach 00:00:00";
     return null;
   })();
 
@@ -520,19 +560,19 @@ export default function OperatorPage() {
         {/* Rebalancer status strip */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card padding="sm">
-            <p className="text-xs font-medium mb-2" style={{ color: "var(--color-muted)" }}>Status</p>
-            <CooldownTimer lastRebalance={lastRebalance} cooldown={cooldown} />
+            <p className="text-xs font-medium mb-2" style={{ color: "var(--color-muted)" }}>Rebalancer Status</p>
+            <Badge variant="green">No cooldown</Badge>
           </Card>
           <Card padding="sm">
-            <p className="text-xs font-medium mb-2" style={{ color: "var(--color-muted)" }}>Max Single Move</p>
-            <p className="text-lg font-bold" style={{ color: "var(--color-text)" }}>
-              {maxMoveBps ? formatPct(Number(maxMoveBps)) : "30.00%"}
+            <p className="text-xs font-medium mb-2" style={{ color: "var(--color-muted)" }}>In Transit</p>
+            <p className="text-lg font-bold" style={{ color: inTransitAssets && inTransitAssets > 0n ? "#f59e0b" : "var(--color-text)" }}>
+              ${inTransitAssets !== undefined ? (Number(inTransitAssets) / 1e6).toFixed(2) : "—"}
             </p>
           </Card>
           <Card padding="sm">
-            <p className="text-xs font-medium mb-2" style={{ color: "var(--color-muted)" }}>Cooldown Period</p>
+            <p className="text-xs font-medium mb-2" style={{ color: "var(--color-muted)" }}>CCIP Gas Limit</p>
             <p className="text-lg font-bold" style={{ color: "var(--color-text)" }}>
-              {cooldown ? `${Number(cooldown) / 3600}h` : "24h"}
+              {currentGasLimit !== undefined ? Number(currentGasLimit).toLocaleString() : "—"}
             </p>
           </Card>
         </div>
@@ -609,7 +649,7 @@ export default function OperatorPage() {
                 <ProtocolSelect value={rebalTarget} onChange={setRebalTarget} />
               </Field>
             </div>
-            <Field label="Amount (USDC)" hint="Absolute USDC amount to move. Max single move: 30% of TVL.">
+            <Field label="Amount (USDC)" hint="Absolute USDC amount to move between adapters on the same spoke.">
               <TextInput
                 type="number"
                 min="0"
@@ -633,7 +673,7 @@ export default function OperatorPage() {
               loading={isRebalancing}
               onClick={handleRebalance}
             >
-              Execute Intra-Spoke Rebalance
+              Send Intra-Spoke Rebalance
             </Button>
           </div>
         </Card>
@@ -674,7 +714,7 @@ export default function OperatorPage() {
                 </div>
               </div>
               <p className="text-xs" style={{ color: "var(--color-muted)" }}>
-                Full allocation details are available on Rebalancer's CCIP message to the spoke. Cooldown resets on each accepted proposal.
+                Full allocation details are available on Rebalancer&apos;s CCIP message to the spoke.
               </p>
             </div>
           ) : (
@@ -691,6 +731,190 @@ export default function OperatorPage() {
               </div>
             </div>
           )}
+        </Card>
+
+        {/* ── CCIP Transfer Status ─────────────────────────────────────── */}
+        {/* Polls the CCIP Explorer API for all messages sent from the Hub.
+            State 0=Untouched, 1=In Progress, 2=Success, 3=Failure.
+            FAILURE means the spoke received the message but execution reverted —
+            tokens sit in the OffRamp until manually executed or abandoned. */}
+        <Card>
+          <CardHeader>
+            <CardTitle style={{ color: "var(--color-text)", fontWeight: 600, fontSize: "0.875rem" }}>
+              CCIP Transfer Status
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              {ccipLoading && <Badge variant="gray">Syncing…</Badge>}
+              {!ccipLoading && <Badge variant="gray">{ccipMessages.length} messages</Badge>}
+              <button
+                onClick={() => refetchCcip()}
+                className="text-xs px-2 py-1 rounded-lg"
+                style={{ background: "var(--color-bg)", color: "var(--color-muted)", border: "1px solid var(--color-border)" }}
+              >
+                Refresh
+              </button>
+            </div>
+          </CardHeader>
+
+          {ccipError && (
+            <div className="rounded-xl px-3 py-2.5 text-xs mb-3" style={{ background: "#fef3c7", color: "#92400e" }}>
+              CCIP Explorer unavailable: {ccipError} —{" "}
+              <a
+                href={`https://ccip.chain.link/address/${CONTRACTS.hub.address}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{ textDecoration: "underline" }}
+              >
+                view manually
+              </a>
+            </div>
+          )}
+
+          {ccipMessages.length === 0 && !ccipLoading && !ccipError ? (
+            <p className="text-xs" style={{ color: "var(--color-muted)" }}>
+              No messages found for Hub address. Messages appear once Hub sends to a spoke.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {ccipMessages.map((msg: CcipMessage) => {
+                const usdcAmount = msg.tokenAmounts?.[0]?.amount;
+                const usdc = usdcAmount ? (Number(usdcAmount) / 1e6).toFixed(2) : null;
+                const stateLabel = CCIP_STATE_LABELS[msg.state] ?? "Unknown";
+                const stateVariant = CCIP_STATE_VARIANTS[msg.state] ?? "gray";
+                const explorerUrl = `https://ccip.chain.link/msg/${msg.messageId}`;
+                return (
+                  <div
+                    key={msg.messageId}
+                    className="rounded-xl px-3 py-2.5 flex items-start justify-between gap-3 text-xs"
+                    style={{ background: "var(--color-bg)" }}
+                  >
+                    <div className="flex flex-col gap-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs" style={{ color: "var(--color-subtle)" }}>
+                          {msg.messageId.slice(0, 10)}…{msg.messageId.slice(-6)}
+                        </span>
+                        <span style={{ color: "var(--color-muted)" }}>→ {chainName(msg.destChainSelector)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {usdc && (
+                          <span className="font-semibold" style={{ color: "var(--color-text)" }}>${usdc} USDC</span>
+                        )}
+                        <span style={{ color: "var(--color-muted)" }}>
+                          {new Date(msg.blockTimestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant={stateVariant}>{stateLabel}</Badge>
+                      <a
+                        href={explorerUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs px-2 py-1 rounded-lg"
+                        style={{ background: "var(--color-surface)", color: "var(--color-primary)", border: "1px solid var(--color-border)" }}
+                      >
+                        Explorer ↗
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="mt-3 text-xs" style={{ color: "var(--color-muted)" }}>
+            Polls every 30s · Hub: <span className="font-mono">{CONTRACTS.hub.address.slice(0, 10)}…</span>
+            {" · "}
+            <a
+              href={`https://ccip.chain.link/address/${CONTRACTS.hub.address}`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "var(--color-primary)", textDecoration: "underline" }}
+            >
+              View all on CCIP Explorer
+            </a>
+          </div>
+        </Card>
+
+        {/* ── Recovery: adjust inTransitAssets ─────────────────────────── */}
+        {/* Use when CCIP messages have FAILURE state and cannot be retried.
+            adjustInTransitAssets corrects Hub accounting without moving USDC.
+            Actual USDC stuck in OffRamp must be handled separately via CCIP Explorer
+            manual execution (if the spoke can receive) or OffRamp claim. */}
+        <Card>
+          <CardHeader>
+            <CardTitle style={{ color: "var(--color-text)", fontWeight: 600, fontSize: "0.875rem" }}>
+              Recovery
+            </CardTitle>
+            <Badge variant="red">Emergency · onlyOwner</Badge>
+          </CardHeader>
+          <div className="flex flex-col gap-4">
+            <div
+              className="rounded-xl px-4 py-3 text-xs"
+              style={{ background: "#fef3c7", border: "1px solid #f59e0b" }}
+            >
+              <p className="font-semibold mb-1" style={{ color: "#92400e" }}>When to use this</p>
+              <p style={{ color: "#92400e" }}>
+                If CCIP Explorer shows a FAILURE state for a Hub→Spoke message, the Hub's
+                {" "}<code>inTransitAssets</code> is stuck and inflates share prices. Set it to 0
+                (or the correct amount) after confirming funds are unrecoverable.
+                <br /><br />
+                Current: <strong>${inTransitAssets !== undefined ? (Number(inTransitAssets) / 1e6).toFixed(2) : "…"} USDC</strong> in transit
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-3">
+                <Field
+                  label="New inTransitAssets (USDC)"
+                  hint="Set to 0 after full failure recovery. Use exact amount if only some messages failed."
+                >
+                  <TextInput
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0"
+                    value={adjustAmount}
+                    onChange={(e) => setAdjustAmount(e.target.value)}
+                  />
+                </Field>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-center"
+                  style={{ borderColor: "var(--color-danger)", color: "var(--color-danger)" }}
+                  disabled={!isConnected || !adjustAmount || isAdjusting}
+                  loading={isAdjusting}
+                  onClick={handleAdjustInTransit}
+                >
+                  Adjust inTransitAssets
+                </Button>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <Field
+                  label="CCIP Outbound Gas Limit"
+                  hint="Increase if spoke messages fail with out-of-gas. Default: 1,500,000."
+                >
+                  <TextInput
+                    type="number"
+                    min="100000"
+                    step="100000"
+                    placeholder={currentGasLimit !== undefined ? Number(currentGasLimit).toString() : "1500000"}
+                    value={newGasLimit}
+                    onChange={(e) => setNewGasLimit(e.target.value)}
+                  />
+                </Field>
+                <Button
+                  className="w-full justify-center"
+                  disabled={!isConnected || !newGasLimit || isSettingGas}
+                  loading={isSettingGas}
+                  onClick={handleSetGasLimit}
+                >
+                  Update Gas Limit
+                </Button>
+              </div>
+            </div>
+          </div>
         </Card>
 
         {/* ── Admin: addSpoke ──────────────────────────────────────────── */}

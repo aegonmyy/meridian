@@ -3,6 +3,7 @@
     "version": "1.0.0",
     "type": "module",
     "dependencies": {
-        "dotenv": "^17.4.2"
+        "dotenv": "^17.4.2",
+        "ethers": "^6.17.0"
     }
 }

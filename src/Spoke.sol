@@ -53,8 +53,9 @@ contract SpokeVault is CCIPReceiver, Ownable {
     // =========================================================================
 
     /// @notice Address of the HubVault on Ethereum — sole authorized CCIP message sender
-    /// @dev Immutable — set once at deployment. Validated in _ccipReceive for every message.
-    address public immutable HUB;
+    /// @dev Validated in _ccipReceive for every message. Mutable via setHub() so Hub can
+    ///      be redeployed (e.g. to add features) without redeploying all spokes.
+    address public HUB;
 
     /// @notice The ERC20 asset managed by this vault (USDC in v1)
     /// @dev Immutable — single asset per spoke in v1. Multi-asset support deferred to v2.
@@ -92,14 +93,20 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @param protocolId The bytes32 identifier of the disabled protocol
     event AdapterRemoved(bytes32 indexed protocolId);
 
+    /// @notice Emitted when the Hub address is updated via setHub
+    /// @param oldHub Previous Hub address
+    /// @param newHub New Hub address
+    event HubUpdated(address indexed oldHub, address indexed newHub);
+
     // =========================================================================
     // Constructor
     // =========================================================================
 
-    /// @notice Deploys the SpokeVault with immutable chain and protocol configuration
+    /// @notice Deploys the SpokeVault with initial chain and protocol configuration
     /// @dev CCIPReceiver validates _router internally — no explicit check needed here.
     ///      Parent constructors run before the zero address checks in the body.
     ///      _hubSelector == 0 is rejected as it would make all outbound CCIP messages fail.
+    ///      HUB is mutable post-deployment via setHub() — update when Hub is redeployed.
     /// @param _hub Address of the HubVault on Ethereum mainnet
     /// @param _asset Address of the ERC20 asset this vault manages (USDC)
     /// @param _router Address of the Chainlink CCIP router on this L2 chain
@@ -164,6 +171,17 @@ contract SpokeVault is CCIPReceiver, Ownable {
         adapters[_protocolId].adapter = IYieldSource(address(0));
         adapters[_protocolId].exists = false;
         emit AdapterRemoved(_protocolId);
+    }
+
+    /// @notice Updates the Hub address — use when Hub is redeployed with new features
+    /// @dev All subsequent CCIP messages will only be accepted from the new Hub address.
+    ///      Pending in-flight messages from the old Hub will be rejected on arrival.
+    ///      Ensure no critical messages are in-flight before calling.
+    /// @param _hub New HubVault address on Ethereum
+    function setHub(address _hub) external onlyOwner {
+        if (_hub == address(0)) revert ZeroAddress();
+        emit HubUpdated(HUB, _hub);
+        HUB = _hub;
     }
 
     // =========================================================================

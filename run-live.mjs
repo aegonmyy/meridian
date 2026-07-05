@@ -4,7 +4,7 @@ dotenv.config();
 
 const GEMINI_KEY   = process.env.GEMINI_API_KEY;
 const AGENT_KEY    = "0xe83bbb5223339d634ca6f0eb5225b9a0b611e3038a6eef7a44b66cab1b3907d5";
-const AGENT_CONSUMER = "0xA9Bd0daDe4CFE85B3c4239951926F69d802Ae6E2";
+const AGENT_CONSUMER = "0xe0a30A4EA672023277D80f3dbf752aa6faEDd37e";
 const SEPOLIA_RPC  = "https://eth-sepolia.g.alchemy.com/v2/tfeWfDNpQFHcrUvZglTOG";
 
 const MARKETS = {

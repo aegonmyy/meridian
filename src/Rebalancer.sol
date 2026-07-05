@@ -35,10 +35,6 @@ contract Rebalancer {
     /// @dev Mutable — can be transferred. Should be a multisig before mainnet.
     address public owner;
 
-    /// @notice Maximum allocation any single market may receive as a fraction of totalAssets
-    /// @dev Expressed in basis points — 3_000 = 30%. Enforced by validateSingleMove.
-    uint256 public constant MAX_SINGLE_MOVE_BPS = 3_000;
-
     /// @notice Maps CCIP chain selectors to their whitelist status
     /// @dev Only whitelisted chains can receive capital. Managed by owner or agentConsumer.
     mapping(uint64 => bool) public whitelistedChains;
@@ -66,8 +62,7 @@ contract Rebalancer {
     /// @notice Thrown when optimal weighted APY does not exceed current by >= 50 bps
     error BelowThreshold();
 
-    /// @notice Thrown when a single allocation exceeds MAX_SINGLE_MOVE_BPS of totalAssets
-    error MaxSingleMoveExceeded();
+    error MaxSingleMoveExceeded(); // kept for ABI compatibility, no longer thrown
 
     /// @notice Thrown when a chain selector in the proposal is not whitelisted
     error ChainNotWhitelisted();
@@ -186,13 +181,12 @@ contract Rebalancer {
     }
 
     /// @notice Validates and executes a full cross-chain allocation proposal from the agent
-    /// @dev Six guards enforced in order — any failure reverts without side effects:
+    /// @dev Five guards enforced in order — any failure reverts without side effects:
     ///      1. onlyAuthorized — owner or AgentConsumer only
     ///      2. InvalidAllocation — validateAllocation(proposedAllocations) must pass
     ///      3. BelowThreshold — optimal weighted APY must exceed current by >= 50 bps
     ///      4. ChainNotWhitelisted — all chainSelectors in proposal must be approved
     ///      5. ProtocolNotWhitelisted — all protocolIds in proposal must be approved
-    ///      6. MaxSingleMoveExceeded — no allocation > 30% of hub.totalAssets()
     ///      On success: calls hub.sendToSpoke() per chain.
     ///      Known limitation: proposedAllocations amounts are in bps but sendToSpoke expects
     ///      absolute USDC amounts — the TODO comment in code flags this conversion gap.
@@ -232,14 +226,6 @@ contract Rebalancer {
         }
 
         uint256 totalAssets = HUB.totalAssets();
-        if (
-            !AllocationMaths.validateSingleMove(
-                proposal.proposedAllocations,
-                totalAssets
-            )
-        ) {
-            revert MaxSingleMoveExceeded();
-        }
 
         for (uint256 i = 0; i < proposal.protocolIds.length; i++) {
             CCIPHelpers.AdapterInstructions[]

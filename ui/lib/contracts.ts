@@ -103,7 +103,27 @@ export const HUB_ABI = [
   { name: "totalAssets",  type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   { name: "totalSupply",  type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   { name: "reservedAssets", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
-  { name: "inTransitAssets", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  { name: "inTransitAssets",  type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  { name: "outboundGasLimit", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint32" }] },
+
+  // ── Recovery / tuning (onlyOwner) ───────────────────────────────────────
+  // setOutboundGasLimit: set CCIP gas limit for outbound messages (default 1_500_000)
+  {
+    name: "setOutboundGasLimit",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_gasLimit", type: "uint32" }],
+    outputs: [],
+  },
+  // adjustInTransitAssets: emergency correction when CCIP messages fail — zeroes or
+  // reduces inTransitAssets so share prices are not inflated by stuck transit amounts.
+  {
+    name: "adjustInTransitAssets",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_newAmount", type: "uint256" }],
+    outputs: [],
+  },
   { name: "spokeChainSelectorsLength", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   {
     name: "balanceOf",
@@ -246,6 +266,17 @@ export const HUB_ABI = [
       { name: "balance",       type: "uint256", indexed: false },
     ],
   },
+  // SentToSpoke: emitted on every hub→spoke CCIP send — track ccipMessageId on ccip.chain.link
+  {
+    name: "SentToSpoke",
+    type: "event",
+    inputs: [
+      { name: "chainSelector",    type: "uint64",  indexed: true  },
+      { name: "ccipMessageId",    type: "bytes32", indexed: true  },
+      { name: "internalMessageId",type: "bytes32", indexed: false },
+      { name: "amount",           type: "uint256", indexed: false },
+    ],
+  },
 
   // ── Custom errors (decoded by viem for precise user feedback) ───────────
   // ZeroWithdrawal: redeem/withdraw when previewRedeem(shares) == 0 (dust shares)
@@ -307,10 +338,6 @@ export const ERC20_ABI = [
 /* ── Rebalancer ABI ──────────────────────────────────────────────────────── */
 export const REBALANCER_ABI = [
   // ── View / immutables ──────────────────────────────────────────────────────
-  { name: "COOLDOWN",                type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
-  { name: "MAX_SINGLE_MOVE_BPS",     type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
-  // lastRebalanceTimestamp — updated after every rebalance() or proposeAllocation() success
-  { name: "lastRebalanceTimestamp",  type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   { name: "owner",                   type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
   { name: "HUB",                     type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
   { name: "AGENT_CONSUMER",          type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
@@ -320,7 +347,7 @@ export const REBALANCER_ABI = [
 
   // ── Core operations (onlyAuthorized: owner or AgentConsumer) ──────────────
   // rebalance — intra-spoke capital move between adapters on one chain
-  // Errors: CooldownNotElapsed, SourceEqualsTarget, ZeroAmount, ChainNotWhitelisted, ProtocolNotWhitelisted
+  // Errors: SourceEqualsTarget, ZeroAmount, ChainNotWhitelisted, ProtocolNotWhitelisted
   {
     name: "rebalance",
     type: "function",
@@ -367,8 +394,6 @@ export const REBALANCER_ABI = [
   { name: "SourceEqualsTarget",         type: "error", inputs: [] },
   // ZeroAmount — rebalance() with _amount == 0
   { name: "ZeroAmount",                 type: "error", inputs: [] },
-  // CooldownNotElapsed — called before 24h since lastRebalanceTimestamp
-  { name: "CooldownNotElapsed",         type: "error", inputs: [] },
   // BelowThreshold — proposeAllocation() optimal APY doesn't beat current by >= 50 bps
   { name: "BelowThreshold",             type: "error", inputs: [] },
   // MaxSingleMoveExceeded — any allocation > 30% of totalAssets
@@ -469,6 +494,15 @@ export const SPOKE_ABI = [
   { name: "HUB",               type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
   { name: "HUB_CHAIN_SELECTOR",type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint64" }] },
 
+  // setHub: update Hub address when Hub is redeployed — onlyOwner
+  {
+    name: "setHub",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "_hub", type: "address" }],
+    outputs: [],
+  },
+
   // ── Events ───────────────────────────────────────────────────────────────
   // AdapterSet: setAdapter() success — new adapter registered or address updated
   // Triggered by: setAdapter(protocolId, adapterAddress) — onlyOwner
@@ -487,6 +521,15 @@ export const SPOKE_ABI = [
     type: "event",
     inputs: [
       { name: "protocolId", type: "bytes32", indexed: true },
+    ],
+  },
+  // HubUpdated: setHub() success — Hub address updated
+  {
+    name: "HubUpdated",
+    type: "event",
+    inputs: [
+      { name: "oldHub", type: "address", indexed: true },
+      { name: "newHub", type: "address", indexed: true },
     ],
   },
 

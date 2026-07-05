@@ -127,6 +127,12 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     ///      Deleted after the callback is processed.
     mapping(bytes32 => uint256) public inTransitAmount;
 
+    /// @notice Gas limit supplied to the CCIP router for all outbound messages
+    /// @dev Configurable by owner. Default 1_500_000 — covers the most expensive spoke
+    ///      operations (deposit → adapter → CONFIRM_RECEIPT CCIP send).
+    ///      Increase via setOutboundGasLimit() if messages fail at destination.
+    uint32 public outboundGasLimit = 1_500_000;
+
     // =========================================================================
     // Events
     // =========================================================================
@@ -172,6 +178,21 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @param chainSelector Chain selector of the reporting spoke
     /// @param balance Updated total balance reported by the spoke in USDC
     event SpokeBalanceUpdated(uint64 indexed chainSelector, uint256 balance);
+
+    /// @notice Emitted when hub dispatches a CCIP message to a spoke
+    /// @dev ccipMessageId is the bytes32 returned by router.ccipSend() — track it on
+    ///      https://ccip.chain.link to monitor delivery status.
+    ///      amount is 0 for non-deposit message types.
+    /// @param chainSelector Destination chain CCIP selector
+    /// @param ccipMessageId CCIP protocol message ID from router.ccipSend()
+    /// @param internalMessageId Hub's internal keccak256 message ID
+    /// @param amount USDC amount sent (0 for REBALANCE / REPORT_BALANCE)
+    event SentToSpoke(
+        uint64 indexed chainSelector,
+        bytes32 indexed ccipMessageId,
+        bytes32 internalMessageId,
+        uint256 amount
+    );
 
     // =========================================================================
     // Modifiers
@@ -244,6 +265,24 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     function setRebalancer(address _rebalancer) external onlyOwner {
         if (_rebalancer == address(0)) revert ZeroAddress();
         REBALANCER = _rebalancer;
+    }
+
+    /// @notice Updates the gas limit passed to CCIP router for all outbound messages
+    /// @dev Increase if CCIP messages land with execution failure at the spoke.
+    ///      Default 1_500_000 covers most operations including adapter deposits + CCIP reply.
+    /// @param _gasLimit New gas limit — must be > 0 and reasonable for spoke execution
+    function setOutboundGasLimit(uint32 _gasLimit) external onlyOwner {
+        outboundGasLimit = _gasLimit;
+    }
+
+    /// @notice Emergency: manually correct inTransitAssets when CCIP messages fail
+    /// @dev Only use after CCIP Explorer confirms a message has FAILURE state and funds
+    ///      cannot be recovered via OffRamp manual execution.
+    ///      This does not move USDC — it only corrects Hub's accounting so share prices
+    ///      are not artificially inflated by stuck transit amounts.
+    /// @param _newAmount New inTransitAssets value — typically 0 after full failure recovery
+    function adjustInTransitAssets(uint256 _newAmount) external onlyOwner {
+        inTransitAssets = _newAmount;
     }
 
     /// @notice Registers a new spoke or updates an existing spoke's contract address
@@ -582,10 +621,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
                 amount: totalAmount
             });
         }
-        uint32 _gasLimit = _message.messageType ==
-            CCIPHelpers.MessageType.REBALANCE
-            ? 1_000_000
-            : 500_000;
         Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(spokes[_chainSelector].spoke),
             data: CCIPHelpers.encode(_message),
@@ -593,7 +628,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             feeToken: address(LINK),
             extraArgs: Client._argsToBytes(
                 Client.EVMExtraArgsV2({
-                    gasLimit: _gasLimit,
+                    gasLimit: outboundGasLimit,
                     allowOutOfOrderExecution: false
                 })
             )
@@ -606,7 +641,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             IERC20(asset()).forceApprove(address(router), totalAmount);
         }
         LINK.forceApprove(address(router), fee);
-        router.ccipSend(_chainSelector, ccipMessage);
+        bytes32 ccipMessageId = router.ccipSend(_chainSelector, ccipMessage);
+        emit SentToSpoke(_chainSelector, ccipMessageId, _message.messageId, totalAmount);
     }
 
     function _messageIdForWithdrawal(

@@ -3,9 +3,39 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const MARKETS = {
-    arbitrum: { aavePoolAddress: "0x794a61358D6845594F94dc1DB02A252b5b4814aD", chainId: 42161, USDC_ADDRESS: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", comet: "0xAec1F48e02Cfb822Be958B68C7957156EB3F0b6e", rpc: "https://ethereum-sepolia-rpc.publicnode.com", chainlinkRouter: "", chainSelector: "", spokeAddress: "" },
-    base: { aavePoolAddress: "0xA238Dd80C259a72e81d7e4664317d3e8b36B4DE9", chainId: 8453, USDC_ADDRESS: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", comet: "0x...", rpc: "", chainlinkRouter: "", chainSelector: "", spokeAddress: "" },
-    optimism: { aavePoolAddress: "0x794a61358D6845594F94dc1DB02A252b5b4814aD", chainId: 10, USDC_ADDRESS: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", comet: "0x...", rpc: "", chainlinkRouter: "", chainSelector: "", spokeAddress: "" }
+    arbitrum: {
+        chainId: 42161,
+        USDC_ADDRESS: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+        aavePoolAddress: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+        comet: "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf", // fixed: old address had no code on Arbitrum
+        rpc: "https://arb-mainnet.g.alchemy.com/v2/tfeWfDNpQFHcrUvZglTOG",
+        chainlinkRouter: "0x141fa059441E0ca23ce184B6A78bafD2A517DdE8",
+        chainSelector: "4949039107694359620",
+        spokeAddress: "0x212393223bec0BB3fBe652b8e1cc16816A1bbdE9",
+        protocols: ["aave", "compound", "morpho"],
+    },
+    base: {
+        chainId: 8453,
+        USDC_ADDRESS: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        aavePoolAddress: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5", // fixed: last chars were wrong
+        comet: "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf",
+        rpc: "https://base-mainnet.g.alchemy.com/v2/tfeWfDNpQFHcrUvZglTOG",
+        chainlinkRouter: "0x881e3A65B4d4a04dD529061dd0071cf975F58bCD",
+        chainSelector: "15971525489660198786",
+        spokeAddress: "0x212393223bec0BB3fBe652b8e1cc16816A1bbdE9",
+        protocols: ["aave", "compound", "morpho"],
+    },
+    optimism: {
+        chainId: 10,
+        USDC_ADDRESS: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+        aavePoolAddress: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+        comet: "0x2e44e174f7D53F0212823acC11C01A11d58c5bCB", // fixed: bad EIP-55 checksum
+        rpc: "https://opt-mainnet.g.alchemy.com/v2/tfeWfDNpQFHcrUvZglTOG",
+        chainlinkRouter: "0x3206695CaE29952f4b0c22a169725a865bc8Ce0f",
+        chainSelector: "3734403246176062136",
+        spokeAddress: "0x212393223bec0BB3fBe652b8e1cc16816A1bbdE9",
+        protocols: ["aave", "compound"],
+    },
 }
 async function fetchAaveRates(market) {
     const query = `{

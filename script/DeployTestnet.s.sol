@@ -37,6 +37,7 @@ import {AaveAdapter} from "../src/adapters/AaveAdapter.sol";
 uint64  constant SEPOLIA_SELECTOR     = 16015286601757825753;
 uint64  constant ARB_SEPOLIA_SELECTOR = 3478487238524512106;
 uint64  constant BASE_SEPOLIA_SELECTOR = 10344971235874465080;
+uint64  constant OP_SEPOLIA_SELECTOR  = 5224473277236331295;
 
 bytes32 constant AAVE     = keccak256("AAVE");
 bytes32 constant COMPOUND = keccak256("COMPOUND");
@@ -221,6 +222,128 @@ contract DeployArbSpoke is Script {
         console.log("  1. Fund Spoke with Arbitrum Sepolia LINK -> https://faucets.chain.link/arbitrum-sepolia");
         console.log("  2. Set SPOKE_ADDRESS=<spoke> in .env");
         console.log("  3. Run RegisterSpoke on Sepolia");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4 — Base Sepolia spoke
+//
+// forge script script/DeployTestnet.s.sol:DeployBaseSpoke \
+//   --rpc-url $BASE_SEPOLIA_RPC_URL \
+//   --broadcast \
+//   -vvv
+//
+// Required env: HUB_ADDRESS
+// ─────────────────────────────────────────────────────────────────────────────
+contract DeployBaseSpoke is Script {
+    // Base Sepolia — docs.chain.link/ccip/directory/testnet
+    address constant CCIP_ROUTER = 0xD3b06cEbF099CE7DA4AcCf578aaebFDBd6e88a93;
+    address constant LINK        = 0xE4aB69C077896252FAFBD49EFD26B5D171A32410;
+    // Circle testnet USDC on Base Sepolia
+    address constant USDC        = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+
+    function run() external {
+        uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
+        address deployer    = vm.addr(deployerKey);
+        address hub         = vm.envAddress("HUB_ADDRESS");
+
+        vm.startBroadcast(deployerKey);
+
+        SpokeVault spoke = new SpokeVault(
+            hub,
+            USDC,
+            CCIP_ROUTER,
+            deployer,
+            LINK,
+            SEPOLIA_SELECTOR
+        );
+
+        vm.stopBroadcast();
+
+        string memory json = string.concat(
+            "{\n",
+            '  "baseSpoke": "', vm.toString(address(spoke)), '",\n',
+            '  "hub": "',       vm.toString(hub),            '"\n',
+            "}"
+        );
+        vm.writeFile("deployed-base-spoke.json", json);
+
+        console.log("\n=== Base Sepolia Spoke Deployment ===");
+        console.log("Spoke: ", address(spoke));
+        console.log("\nNext steps:");
+        console.log("  1. Fund Spoke with Base Sepolia LINK -> https://faucets.chain.link/base-sepolia");
+        console.log("  2. Run RegisterSpoke with SPOKE_CHAIN_SELECTOR=10344971235874465080");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 5 — OP Sepolia spoke
+//
+// forge script script/DeployTestnet.s.sol:DeployOptimismSpoke \
+//   --rpc-url $OP_SEPOLIA_RPC_URL \
+//   --broadcast \
+//   -vvv
+//
+// Required env: HUB_ADDRESS
+// NOTE: OP Sepolia selector (5224473277236331295) must be whitelisted on
+//       Rebalancer first via WhitelistOpSepolia below.
+// ─────────────────────────────────────────────────────────────────────────────
+contract DeployOptimismSpoke is Script {
+    // OP Sepolia — docs.chain.link/ccip/directory/testnet
+    address constant CCIP_ROUTER = 0x114A20A10b43D4115e5aeef7345a1A71d2a60C57;
+    address constant LINK        = 0xE4aB69C077896252FAFBD49EFD26B5D171A32410;
+    // Circle testnet USDC on OP Sepolia
+    address constant USDC        = 0x5fd84259d66Cd46123540766Be93DFE6D43130D7;
+
+    function run() external {
+        uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
+        address deployer    = vm.addr(deployerKey);
+        address hub         = vm.envAddress("HUB_ADDRESS");
+
+        vm.startBroadcast(deployerKey);
+
+        SpokeVault spoke = new SpokeVault(
+            hub,
+            USDC,
+            CCIP_ROUTER,
+            deployer,
+            LINK,
+            SEPOLIA_SELECTOR
+        );
+
+        vm.stopBroadcast();
+
+        string memory json = string.concat(
+            "{\n",
+            '  "opSpoke": "', vm.toString(address(spoke)), '",\n',
+            '  "hub": "',     vm.toString(hub),            '"\n',
+            "}"
+        );
+        vm.writeFile("deployed-op-spoke.json", json);
+
+        console.log("\n=== OP Sepolia Spoke Deployment ===");
+        console.log("Spoke: ", address(spoke));
+        console.log("\nNext steps:");
+        console.log("  1. Fund Spoke with OP Sepolia LINK -> https://faucets.chain.link/optimism-sepolia");
+        console.log("  2. Run WhitelistOpSepolia on Sepolia (adds OP selector to Rebalancer)");
+        console.log("  3. Run RegisterSpoke with SPOKE_CHAIN_SELECTOR=5224473277236331295");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utility — Whitelist OP Sepolia on Rebalancer (run on Sepolia)
+// OP Sepolia was not whitelisted in Phase 1 — run this before RegisterSpoke.
+// ─────────────────────────────────────────────────────────────────────────────
+contract WhitelistOpSepolia is Script {
+    function run() external {
+        uint256 deployerKey     = vm.envUint("DEPLOYER_KEY");
+        address rebalancerAddr  = vm.envAddress("REBALANCER_ADDRESS");
+
+        vm.startBroadcast(deployerKey);
+        Rebalancer(rebalancerAddr).addChainToWhitelist(OP_SEPOLIA_SELECTOR);
+        vm.stopBroadcast();
+
+        console.log("OP Sepolia selector whitelisted on Rebalancer:", OP_SEPOLIA_SELECTOR);
     }
 }
 

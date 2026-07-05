@@ -1,4 +1,4 @@
-import { sepolia, arbitrumSepolia } from "wagmi/chains";
+import { sepolia, arbitrumSepolia, baseSepolia, optimismSepolia } from "wagmi/chains";
 
 /* ── Deployed addresses ─────────────────────────────────────────────────── */
 export const CONTRACTS = {
@@ -17,6 +17,14 @@ export const CONTRACTS = {
   arbSpoke: {
     chainId: arbitrumSepolia.id,
     address: (process.env.NEXT_PUBLIC_ARB_SPOKE_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`,
+  },
+  baseSpoke: {
+    chainId: baseSepolia.id,
+    address: (process.env.NEXT_PUBLIC_BASE_SPOKE_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`,
+  },
+  opSpoke: {
+    chainId: optimismSepolia.id,
+    address: (process.env.NEXT_PUBLIC_OP_SPOKE_ADDRESS ?? "0x0000000000000000000000000000000000000000") as `0x${string}`,
   },
   usdc: {
     sepolia: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as `0x${string}`,
@@ -513,13 +521,15 @@ export const PROTOCOL_LABELS: Record<string, string> = {
 
 /* ── CCIP chain selectors ─────────────────────────────────────────────────── */
 export const CHAIN_SELECTORS = {
-  sepolia:         16015286601757825753n,
-  arbitrumSepolia: 3478487238524512106n,
-  baseSepolia:     10344971235874465080n,
+  sepolia:          16015286601757825753n,
+  arbitrumSepolia:  3478487238524512106n,
+  baseSepolia:      10344971235874465080n,
+  optimismSepolia:  5224473277236331295n,
 } as const;
 
 export const SELECTOR_LABELS: Record<string, string> = {
-  "16015286601757825753":  "Ethereum Sepolia",
-  "3478487238524512106":   "Arbitrum Sepolia",
-  "10344971235874465080":  "Base Sepolia",
+  "16015286601757825753": "Ethereum Sepolia",
+  "3478487238524512106":  "Arbitrum Sepolia",
+  "10344971235874465080": "Base Sepolia",
+  "5224473277236331295":  "OP Sepolia",
 };

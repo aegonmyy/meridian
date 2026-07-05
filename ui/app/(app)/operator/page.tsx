@@ -39,14 +39,13 @@ import {
 } from "@/hooks/use-ccip-messages";
 
 /* ── CCIP chain name helper ──────────────────────────────────────────────── */
-function chainName(selector: string): string {
-  const labels: Record<string, string> = {
-    "3478487238524512106":  "Arb Sepolia",
-    "10344971235874465080": "Base Sepolia",
-    "5224473277236331295":  "OP Sepolia",
-    "16015286601757825753": "Sepolia",
-  };
-  return labels[selector] ?? selector.slice(0, 10) + "…";
+function chainName(networkName?: string): string {
+  if (!networkName) return "Unknown";
+  if (networkName.includes("arbitrum")) return "Arb Sepolia";
+  if (networkName.includes("base")) return "Base Sepolia";
+  if (networkName.includes("optimism")) return "OP Sepolia";
+  if (networkName.includes("sepolia")) return "Sepolia";
+  return networkName.split("-").slice(-1)[0];
 }
 
 /* ── Shared field wrapper ────────────────────────────────────────────────── */
@@ -793,14 +792,14 @@ export default function OperatorPage() {
                         <span className="font-mono text-xs" style={{ color: "var(--color-subtle)" }}>
                           {msg.messageId.slice(0, 10)}…{msg.messageId.slice(-6)}
                         </span>
-                        <span style={{ color: "var(--color-muted)" }}>→ {chainName(msg.destChainSelector)}</span>
+                        <span style={{ color: "var(--color-muted)" }}>→ {chainName(msg.destNetworkName)}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         {usdc && (
                           <span className="font-semibold" style={{ color: "var(--color-text)" }}>${usdc} USDC</span>
                         )}
                         <span style={{ color: "var(--color-muted)" }}>
-                          {new Date(msg.blockTimestamp).toLocaleTimeString()}
+                          {msg.sendTimestamp ? new Date(msg.sendTimestamp).toLocaleTimeString() : ""}
                         </span>
                       </div>
                     </div>
@@ -810,16 +809,27 @@ export default function OperatorPage() {
                         href={explorerUrl}
                         target="_blank"
                         rel="noreferrer"
+                        title={msg.state === 3 ? "Open CCIP Explorer → click 'Execute manually' to retry" : "View on CCIP Explorer"}
                         className="text-xs px-2 py-1 rounded-lg"
-                        style={{ background: "var(--color-surface)", color: "var(--color-primary)", border: "1px solid var(--color-border)" }}
+                        style={{
+                          background: msg.state === 3 ? "var(--color-error-bg, #fee)" : "var(--color-surface)",
+                          color: msg.state === 3 ? "#dc2626" : "var(--color-primary)",
+                          border: `1px solid ${msg.state === 3 ? "#fca5a5" : "var(--color-border)"}`,
+                        }}
                       >
-                        Explorer ↗
+                        {msg.state === 3 ? "Retry ↗" : "Explorer ↗"}
                       </a>
                     </div>
                   </div>
                 );
               })}
             </div>
+          )}
+
+          {ccipMessages.some((m: CcipMessage) => m.state === 3) && (
+            <p className="mt-2 text-xs px-1" style={{ color: "var(--color-muted)" }}>
+              <strong style={{ color: "#dc2626" }}>Failure:</strong> Click <strong>Retry ↗</strong> → CCIP Explorer will show an &ldquo;Execute manually&rdquo; button that re-submits the message to the OffRamp on the destination chain. After all messages are confirmed failed/unrecoverable, use the Recovery panel below to zero out <code>inTransitAssets</code>.
+            </p>
           )}
 
           <div className="mt-3 text-xs" style={{ color: "var(--color-muted)" }}>

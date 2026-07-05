@@ -142,8 +142,15 @@ export default function AllocationsPage() {
           <Card className="flex flex-col gap-5">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-xl flex items-center justify-center text-white text-xs font-bold"
-                  style={{ background: "#1814f3" }}>A</div>
+                <div className="h-8 w-8 rounded-xl flex items-center justify-center"
+                  style={{ background: "#1814f3" }}>
+                  {/* Arbitrum orbit */}
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="9" cy="9" r="2.5" fill="white"/>
+                    <ellipse cx="9" cy="9" rx="7" ry="3" stroke="white" strokeWidth="1.2" transform="rotate(-35 9 9)"/>
+                    <ellipse cx="9" cy="9" rx="7" ry="3" stroke="white" strokeWidth="1.2" transform="rotate(35 9 9)"/>
+                  </svg>
+                </div>
                 <div>
                   <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Arbitrum Sepolia</p>
                   <p className="text-xs" style={{ color: "var(--color-muted)" }}>L2 Spoke</p>
@@ -209,8 +216,14 @@ export default function AllocationsPage() {
           <Card className="flex flex-col gap-5" style={{ opacity: 0.6 }}>
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-xl flex items-center justify-center text-white text-xs font-bold"
-                  style={{ background: "#16dbcc" }}>B</div>
+                <div className="h-8 w-8 rounded-xl flex items-center justify-center"
+                  style={{ background: "#16dbcc" }}>
+                  {/* Base diamond */}
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 2L16 9L9 16L2 9Z" fill="white" fillOpacity="0.9"/>
+                    <path d="M9 5L13 9L9 13L5 9Z" fill="#16dbcc"/>
+                  </svg>
+                </div>
                 <div>
                   <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Base Sepolia</p>
                   <p className="text-xs" style={{ color: "var(--color-muted)" }}>L2 Spoke</p>
@@ -227,8 +240,14 @@ export default function AllocationsPage() {
           <Card className="flex flex-col gap-5">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-xl flex items-center justify-center text-white text-xs font-bold"
-                  style={{ background: "#10b981" }}>E</div>
+                <div className="h-8 w-8 rounded-xl flex items-center justify-center"
+                  style={{ background: "#10b981" }}>
+                  {/* ETH diamond */}
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 2L14 9L9 11L4 9Z" fill="white" fillOpacity="0.9"/>
+                    <path d="M9 11L14 9L9 16L4 9Z" fill="white" fillOpacity="0.6"/>
+                  </svg>
+                </div>
                 <div>
                   <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>Ethereum Sepolia</p>
                   <p className="text-xs" style={{ color: "var(--color-muted)" }}>Hub Reserve</p>

@@ -30,17 +30,14 @@ export function Topbar({ title }: { title: string }) {
       className="flex items-center justify-between h-16 px-4 sm:px-8 border-b shrink-0"
       style={{ background: "var(--color-card)", borderColor: "var(--color-border)" }}
     >
-      {/* Logo — only visible on mobile where sidebar is hidden */}
-      <div className="flex items-center gap-2 md:hidden">
+      {/* Logo icon only on mobile — no wordmark */}
+      <div className="flex items-center md:hidden">
         <div
           className="h-7 w-7 rounded-lg flex items-center justify-center text-white text-xs font-bold"
           style={{ background: "var(--color-primary)" }}
         >
           M
         </div>
-        <span className="font-semibold text-sm" style={{ color: "var(--color-text)" }}>
-          Meridian
-        </span>
       </div>
 
       {/* Page title — only on desktop where sidebar provides the brand */}

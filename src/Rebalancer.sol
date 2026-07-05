@@ -13,12 +13,11 @@ import {AllocationProposal} from "./interfaces/IRebalancer.sol";
 ///      proposals; Rebalancer enforces on-chain guards before calling hub functions.
 ///      Guards enforced in order:
 ///      1. Access control — only owner or AgentConsumer
-///      2. Cooldown — minimum 24 hours between rebalances
-///      3. Allocation validity — sum, per-market cap, chain cap, dust floor
-///      4. APY threshold — optimal must beat current by >= 50 bps (proposeAllocation only)
-///      5. Chain whitelist — all selectors in proposal must be approved
-///      6. Protocol whitelist — all protocol ids must be approved
-///      7. Max single move — no allocation may exceed 30% of totalAssets
+///      2. Allocation validity — sum, per-market cap, chain cap, dust floor
+///      3. APY threshold — optimal must beat current by >= 50 bps (proposeAllocation only)
+///      4. Chain whitelist — all selectors in proposal must be approved
+///      5. Protocol whitelist — all protocol ids must be approved
+///      6. Max single move — no allocation may exceed 30% of totalAssets
 contract Rebalancer {
     // =========================================================================
     // State Variables
@@ -35,15 +34,6 @@ contract Rebalancer {
     /// @notice Contract owner — authorized to call all functions and manage whitelists
     /// @dev Mutable — can be transferred. Should be a multisig before mainnet.
     address public owner;
-
-    /// @notice Timestamp of the last successful rebalance or proposeAllocation execution
-    /// @dev Compared against block.timestamp to enforce COOLDOWN between operations.
-    ///      Shared between rebalance() and proposeAllocation() — either call resets it.
-    uint256 public lastRebalanceTimestamp;
-
-    /// @notice Minimum time between successive rebalance operations
-    /// @dev Prevents the agent from thrashing capital between protocols in rapid succession.
-    uint256 public constant COOLDOWN = 24 hours;
 
     /// @notice Maximum allocation any single market may receive as a fraction of totalAssets
     /// @dev Expressed in basis points — 3_000 = 30%. Enforced by validateSingleMove.
@@ -72,9 +62,6 @@ contract Rebalancer {
 
     /// @notice Thrown when rebalance amount is zero
     error ZeroAmount();
-
-    /// @notice Thrown when less than COOLDOWN has elapsed since last rebalance
-    error CooldownNotElapsed();
 
     /// @notice Thrown when optimal weighted APY does not exceed current by >= 50 bps
     error BelowThreshold();
@@ -162,11 +149,10 @@ contract Rebalancer {
     // =========================================================================
 
     /// @notice Executes an intra-spoke rebalance — moves capital between adapters on one chain
-    /// @dev Guards enforced in order: access control, cooldown, source != target,
+    /// @dev Guards enforced in order: access control, source != target,
     ///      amount != 0, chain whitelisted, both protocols whitelisted.
     ///      Does NOT validate APY gain — intra-spoke rebalances are manual operator decisions.
     ///      Does NOT enforce max single move — amount is absolute not proportional to totalAssets.
-    ///      Updates lastRebalanceTimestamp on success — shared cooldown with proposeAllocation.
     ///      Calls hub.rebalance() which sends a REBALANCE CCIP message to the target spoke.
     /// @param _source bytes32 protocol identifier of the source adapter to withdraw from
     /// @param _target bytes32 protocol identifier of the target adapter to deposit into
@@ -178,10 +164,6 @@ contract Rebalancer {
         uint256 _amount,
         uint64 _chainSelector
     ) external onlyAuthorized {
-        uint256 currentTime = block.timestamp;
-        if (currentTime < lastRebalanceTimestamp + COOLDOWN) {
-            revert CooldownNotElapsed();
-        }
         if (_source == _target) revert SourceEqualsTarget();
         if (_amount == 0) revert ZeroAmount();
         if (!whitelistedChains[_chainSelector]) revert ChainNotWhitelisted();
@@ -199,21 +181,19 @@ contract Rebalancer {
             targetAdapter: _target,
             targetAmount: 0
         });
-        bytes32 _messageId = keccak256(abi.encode(_target, currentTime));
-        lastRebalanceTimestamp = currentTime;
+        bytes32 _messageId = keccak256(abi.encode(_target, block.timestamp));
         HUB.rebalance(_chainSelector, _instructions, _messageId);
     }
 
     /// @notice Validates and executes a full cross-chain allocation proposal from the agent
-    /// @dev Seven guards enforced in order — any failure reverts without side effects:
+    /// @dev Six guards enforced in order — any failure reverts without side effects:
     ///      1. onlyAuthorized — owner or AgentConsumer only
-    ///      2. CooldownNotElapsed — 24 hours since last rebalance
-    ///      3. InvalidAllocation — validateAllocation(proposedAllocations) must pass
-    ///      4. BelowThreshold — optimal weighted APY must exceed current by >= 50 bps
-    ///      5. ChainNotWhitelisted — all chainSelectors in proposal must be approved
-    ///      6. ProtocolNotWhitelisted — all protocolIds in proposal must be approved
-    ///      7. MaxSingleMoveExceeded — no allocation > 30% of hub.totalAssets()
-    ///      On success: updates lastRebalanceTimestamp then calls hub.sendToSpoke() per chain.
+    ///      2. InvalidAllocation — validateAllocation(proposedAllocations) must pass
+    ///      3. BelowThreshold — optimal weighted APY must exceed current by >= 50 bps
+    ///      4. ChainNotWhitelisted — all chainSelectors in proposal must be approved
+    ///      5. ProtocolNotWhitelisted — all protocolIds in proposal must be approved
+    ///      6. MaxSingleMoveExceeded — no allocation > 30% of hub.totalAssets()
+    ///      On success: calls hub.sendToSpoke() per chain.
     ///      Known limitation: proposedAllocations amounts are in bps but sendToSpoke expects
     ///      absolute USDC amounts — the TODO comment in code flags this conversion gap.
     /// @param proposal The AllocationProposal struct containing current and proposed allocations,
@@ -221,10 +201,6 @@ contract Rebalancer {
     function proposeAllocation(
         AllocationProposal memory proposal
     ) external onlyAuthorized {
-        uint256 currentTime = block.timestamp;
-        if (currentTime < lastRebalanceTimestamp + COOLDOWN) {
-            revert CooldownNotElapsed();
-        }
         bool valid = AllocationMaths.validateAllocation(
             proposal.proposedAllocations
         );
@@ -265,7 +241,6 @@ contract Rebalancer {
             revert MaxSingleMoveExceeded();
         }
 
-        lastRebalanceTimestamp = currentTime;
         for (uint256 i = 0; i < proposal.protocolIds.length; i++) {
             CCIPHelpers.AdapterInstructions[]
                 memory _instructions = new CCIPHelpers.AdapterInstructions[](

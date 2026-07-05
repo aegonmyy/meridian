@@ -129,8 +129,6 @@ contract RebalancerTest is Test {
         });
         hub.sendToSpoke(chainSelector, instructions);
 
-        // warp past cooldown so first rebalance can execute
-        vm.warp(block.timestamp + 25 hours);
     }
 
     // =========================================================================
@@ -230,28 +228,9 @@ contract RebalancerTest is Test {
         assertEq(compoundAdapter.totalAssets(), 2_000e6);
     }
 
-    function test_rebalance_updatesLastRebalanceTimestamp() public {
-        uint256 before = rebalancer.lastRebalanceTimestamp();
+    function test_rebalance_canCallTwiceInRow() public {
         vm.prank(owner);
         rebalancer.rebalance(AAVE, COMPOUND, 2_000e6, chainSelector);
-        assertGt(rebalancer.lastRebalanceTimestamp(), before);
-    }
-
-    function test_rebalance_cooldownTriggersAfterSuccess() public {
-        vm.prank(owner);
-        rebalancer.rebalance(AAVE, COMPOUND, 2_000e6, chainSelector);
-
-        // immediately after — should revert
-        vm.prank(owner);
-        vm.expectRevert(Rebalancer.CooldownNotElapsed.selector);
-        rebalancer.rebalance(AAVE, COMPOUND, 1_000e6, chainSelector);
-    }
-
-    function test_rebalance_succeedsAfterCooldownElapsed() public {
-        vm.prank(owner);
-        rebalancer.rebalance(AAVE, COMPOUND, 2_000e6, chainSelector);
-
-        vm.warp(block.timestamp + 25 hours);
 
         vm.prank(owner);
         rebalancer.rebalance(COMPOUND, AAVE, 1_000e6, chainSelector);
@@ -273,15 +252,6 @@ contract RebalancerTest is Test {
     function test_rebalance_revert_notAuthorized() public {
         vm.prank(attacker);
         vm.expectRevert(Rebalancer.NotAuthorized.selector);
-        rebalancer.rebalance(AAVE, COMPOUND, 1_000e6, chainSelector);
-    }
-
-    function test_rebalance_revert_cooldownNotElapsed() public {
-        vm.prank(owner);
-        rebalancer.rebalance(AAVE, COMPOUND, 1_000e6, chainSelector);
-
-        vm.prank(owner);
-        vm.expectRevert(Rebalancer.CooldownNotElapsed.selector);
         rebalancer.rebalance(AAVE, COMPOUND, 1_000e6, chainSelector);
     }
 

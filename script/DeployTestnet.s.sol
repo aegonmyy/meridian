@@ -348,6 +348,39 @@ contract WhitelistOpSepolia is Script {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Phase — Deploy adapters on Base Sepolia and register with spoke
+//
+// forge script script/DeployTestnet.s.sol:DeployBaseAdapters \
+//   --rpc-url $BASE_SEPOLIA_RPC_URL \
+//   --broadcast \
+//   -vvv
+//
+// Required env: SPOKE_ADDRESS (Base Sepolia spoke: 0x2A835C21fcE662a0D88B1abE91bFBACE5675a025)
+// ─────────────────────────────────────────────────────────────────────────────
+contract DeployBaseAdapters is Script {
+    address constant USDC       = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+    // Aave v3 Base Sepolia — confirmed via PoolAddressesProvider 0xd449FeD...
+    address constant AAVE_POOL  = 0x07eA79F68B2B3df564D0A34F8e19D9B1e339814b;
+    address constant AAVE_AUSDC = 0xf53B60F4006cab2b3C4688ce41fD5362427A2A66;
+
+    function run() external {
+        uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
+        address spokeAddr   = vm.envAddress("SPOKE_ADDRESS");
+
+        vm.startBroadcast(deployerKey);
+
+        AaveAdapter aaveAdapter = new AaveAdapter(AAVE_POOL, AAVE_AUSDC, USDC);
+        SpokeVault(spokeAddr).setAdapter(AAVE, address(aaveAdapter));
+
+        vm.stopBroadcast();
+
+        console.log("\n=== Base Sepolia Adapters ===");
+        console.log("Spoke:       ", spokeAddr);
+        console.log("AaveAdapter: ", address(aaveAdapter));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Phase 3 — Register spoke on hub (run back on Sepolia)
 //
 // forge script script/DeployTestnet.s.sol:RegisterSpoke \
@@ -382,5 +415,67 @@ contract RegisterSpoke is Script {
         console.log("Chain selector:   ", chainSelector);
         console.log("\nDeployment complete. Users can now deposit USDC into the hub.");
         console.log("Get testnet USDC at https://faucet.circle.com");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utility — Redeploy Rebalancer + AgentConsumer (resets 24h cooldown)
+//           then points Hub at the new Rebalancer.
+//
+// forge script script/DeployTestnet.s.sol:RedeployCore \
+//   --rpc-url $SEPOLIA_RPC_URL \
+//   --broadcast \
+//   -vvv
+//
+// Required env: DEPLOYER_KEY, HUB_ADDRESS, AGENT_ADDRESS
+// ─────────────────────────────────────────────────────────────────────────────
+contract RedeployCore is Script {
+    function run() external {
+        uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
+        address deployer    = vm.addr(deployerKey);
+        address hubAddr     = vm.envAddress("HUB_ADDRESS");
+        address agentAddr   = vm.envAddress("AGENT_ADDRESS");
+
+        uint256 nonce = vm.getNonce(deployer);
+        address predictedRebalancer    = vm.computeCreateAddress(deployer, nonce);
+        address predictedAgentConsumer = vm.computeCreateAddress(deployer, nonce + 1);
+
+        vm.startBroadcast(deployerKey);
+
+        Rebalancer rebalancer = new Rebalancer(
+            hubAddr,
+            predictedAgentConsumer,
+            deployer
+        );
+
+        AgentConsumer agentConsumer = new AgentConsumer(
+            address(rebalancer),
+            agentAddr,
+            deployer
+        );
+
+        require(address(rebalancer)    == predictedRebalancer,    "rebalancer address mismatch");
+        require(address(agentConsumer) == predictedAgentConsumer, "agentConsumer address mismatch");
+
+        // Whitelist all three chains
+        rebalancer.addChainToWhitelist(ARB_SEPOLIA_SELECTOR);
+        rebalancer.addChainToWhitelist(BASE_SEPOLIA_SELECTOR);
+        rebalancer.addChainToWhitelist(OP_SEPOLIA_SELECTOR);
+
+        // Whitelist all three protocols
+        rebalancer.addProtocolToWhitelist(AAVE);
+        rebalancer.addProtocolToWhitelist(COMPOUND);
+        rebalancer.addProtocolToWhitelist(MORPHO);
+
+        // Point Hub at new Rebalancer
+        HUB(hubAddr).setRebalancer(address(rebalancer));
+
+        vm.stopBroadcast();
+
+        console.log("\n=== RedeployCore Complete ===");
+        console.log("Hub:           ", hubAddr);
+        console.log("Rebalancer:    ", address(rebalancer));
+        console.log("AgentConsumer: ", address(agentConsumer));
+        console.log("\nUpdate run-live.mjs: AGENT_CONSUMER =", address(agentConsumer));
     }
 }

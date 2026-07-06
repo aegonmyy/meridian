@@ -2,13 +2,13 @@ import { createConfig, http } from "wagmi";
 import { sepolia, arbitrumSepolia, baseSepolia, optimismSepolia } from "wagmi/chains";
 import { injected, walletConnect } from "wagmi/connectors";
 
+const wcProjectId = process.env.NEXT_PUBLIC_WC_PROJECT_ID;
+
 export const wagmiConfig = createConfig({
   chains: [sepolia, arbitrumSepolia, baseSepolia, optimismSepolia],
   connectors: [
     injected(),
-    walletConnect({
-      projectId: process.env.NEXT_PUBLIC_WC_PROJECT_ID ?? "00000000000000000000000000000000",
-    }),
+    ...(wcProjectId ? [walletConnect({ projectId: wcProjectId })] : []),
   ],
   transports: {
     [sepolia.id]:          http(process.env.NEXT_PUBLIC_SEPOLIA_RPC),

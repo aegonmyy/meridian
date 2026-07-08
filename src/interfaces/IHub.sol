@@ -21,7 +21,6 @@ interface IHub {
 
     function rebalance(
         uint64 _chainSelector,
-        CCIPHelpers.AdapterInstructions[] memory _instructions,
-        bytes32 _messageId
+        CCIPHelpers.AdapterInstructions[] memory _instructions
     ) external;
 }

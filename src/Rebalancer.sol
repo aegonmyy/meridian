@@ -176,8 +176,9 @@ contract Rebalancer {
             targetAdapter: _target,
             targetAmount: 0
         });
-        bytes32 _messageId = keccak256(abi.encode(_target, block.timestamp));
-        HUB.rebalance(_chainSelector, _instructions, _messageId);
+        // Message id is derived inside the hub via its nonce'd _newMessageId helper
+        // (WI-1) — the rebalancer no longer derives collision-prone content ids.
+        HUB.rebalance(_chainSelector, _instructions);
     }
 
     /// @notice Validates and executes a full cross-chain allocation proposal from the agent

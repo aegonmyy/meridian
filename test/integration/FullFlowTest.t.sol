@@ -405,7 +405,6 @@ contract FullFlowTest is Test {
 
         vm.warp(block.timestamp + 25 hours);
 
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         CCIPHelpers.AdapterInstructions[]
             memory rebalanceInstructions = new CCIPHelpers.AdapterInstructions[](
                 1
@@ -418,7 +417,7 @@ contract FullFlowTest is Test {
         });
 
         vm.prank(address(rebalancer));
-        hub.rebalance(ARBITRUM_SELECTOR, rebalanceInstructions, messageId);
+        hub.rebalance(ARBITRUM_SELECTOR, rebalanceInstructions);
 
         // rebalance never touches inTransit, exact
         assertEq(hub.inTransitAssets(), 0, "inTransit stays 0 for rebalance");

@@ -109,8 +109,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     mapping(uint64 => uint256) public lastReportTimestamp;
 
     /// @notice Pending withdrawals keyed by messageId awaiting async settlement
-    /// @dev messageId is keccak256(receiver, timestamp) — unique per withdrawal per block.
-    ///      Same-block collision is a known v1 limitation; nonce will be added in v2.
+    /// @dev messageId is derived from a monotonic nonce via _newMessageId — unique
+    ///      across the hub's lifetime, so same-block withdrawals never collide.
     mapping(bytes32 => PendingWithdrawal) public pendingWithdrawals;
 
     /// @notice Maximum age of a spoke balance report before it is considered stale
@@ -132,6 +132,14 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     ///      operations (deposit → adapter → CONFIRM_RECEIPT CCIP send).
     ///      Increase via setOutboundGasLimit() if messages fail at destination.
     uint32 public outboundGasLimit = 1_500_000;
+
+    /// @notice Monotonic counter used to derive collision-free internal message ids
+    /// @dev Incremented for every id produced by _newMessageId. Because it is part of
+    ///      the preimage, two operations in the same block (same amount / receiver /
+    ///      target) can never share an id — this is the fix for the content-derived
+    ///      id collisions that previously corrupted inTransitAmount bookkeeping and
+    ///      overwrote pending withdrawals.
+    uint256 private _messageNonce;
 
     // =========================================================================
     // Events
@@ -356,8 +364,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.AdapterInstructions[] memory _instructions
     ) external onlyRebalancer {
         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
-        uint256 _amount = _instructions[0].amount;
-        bytes32 _messageId = keccak256(abi.encode(_amount, block.timestamp));
+        bytes32 _messageId = _newMessageId(bytes32(uint256(_chainSelector)));
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.DEPOSIT,
             instructions: _instructions,
@@ -399,17 +406,18 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     ///      no tokens attached. Spoke withdraws from source adapter and deposits into target
     ///      adapter on the same chain. No capital leaves the spoke chain.
     ///      Spoke responds with CONFIRM_REBALANCE carrying updated spoke balance.
+    ///      The message id is derived internally via the nonce'd _newMessageId helper —
+    ///      callers no longer supply one (removed in WI-1 to eliminate id collisions).
     /// @param _chainSelector CCIP chain selector of the target spoke
     /// @param _instructions Array specifying source adapter, target adapter, and amount to move
-    /// @param _messageId Unique identifier for this rebalance operation
     function rebalance(
         uint64 _chainSelector,
-        CCIPHelpers.AdapterInstructions[] memory _instructions,
-        bytes32 _messageId
+        CCIPHelpers.AdapterInstructions[] memory _instructions
     ) external onlyRebalancer {
         if (!spokes[_chainSelector].exists) {
             revert SpokeNotFound();
         }
+        bytes32 _messageId = _newMessageId(bytes32(uint256(_chainSelector)));
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.REBALANCE,
             instructions: _instructions,
@@ -443,8 +451,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @notice Overrides ERC4626._withdraw to implement three-path async withdrawal
     /// @dev Shares are transferred to hub at start and only burned on final settlement.
     ///      No super() call — full flow is owned here.
-    ///      messageId = keccak256(receiver, timestamp) — same-block collision is a known
-    ///      v1 limitation; a nonce will be added in v2.
+    ///      messageId is derived from a monotonic nonce via _newMessageId — collision-free.
     ///      Path 1 (sync): idle >= assets AND all spokes fresh → immediate settlement.
     ///      Path 2 (async): idle >= assets AND any spoke stale → queue + REPORT_BALANCE.
     ///      Path 3 (async): idle < assets → reserve idle, recall shortfall from best spoke.
@@ -467,7 +474,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         assets = previewRedeem(shares);
         if (assets == 0) revert ZeroWithdrawal();
         uint256 idle = _idleBalance() - reservedAssets;
-        bytes32 _messageId = _messageIdForWithdrawal(receiver);
+        bytes32 _messageId = _newMessageId(bytes32(uint256(uint160(receiver))));
         if (idle >= assets) {
             reservedAssets += assets;
             if (_allSpokesFresh()) {
@@ -645,10 +652,18 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         emit SentToSpoke(_chainSelector, ccipMessageId, _message.messageId, totalAmount);
     }
 
-    function _messageIdForWithdrawal(
-        address receiver
-    ) internal view returns (bytes32) {
-        return keccak256(abi.encode(receiver, block.timestamp));
+    /// @notice Derives a collision-free internal message id from a monotonic nonce
+    /// @dev Every id is unique across the hub's lifetime — the incrementing nonce
+    ///      guarantees no two operations (deposits, withdrawals, rebalances, recalls)
+    ///      ever share an id, even within a single block. The additional context,
+    ///      chainid, and address inputs harden the id against cross-contract reuse.
+    /// @param context Caller-supplied disambiguator (e.g. selector or receiver)
+    /// @return A unique bytes32 message id
+    function _newMessageId(bytes32 context) internal returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(++_messageNonce, context, block.chainid, address(this))
+            );
     }
 
     /// @notice Returns total protocol assets per ERC4626 standard

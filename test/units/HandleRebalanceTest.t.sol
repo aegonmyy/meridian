@@ -126,11 +126,8 @@ contract HandleRebalanceTest is Test {
             targetAdapter: target,
             targetAmount: 0
         });
-        bytes32 messageId = keccak256(
-            abi.encode(source, target, block.timestamp)
-        );
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
     }
 
     // =========================================================================
@@ -207,9 +204,8 @@ contract HandleRebalanceTest is Test {
             targetAmount: 0
         });
 
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
 
         assertEq(aaveAdapter.totalAssets(), 3_500e6);
         assertEq(compoundAdapter.totalAssets(), 1_000e6);
@@ -250,21 +246,19 @@ contract HandleRebalanceTest is Test {
             targetAmount: 0
         });
 
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
         // CCIP delivers but spoke reverts — hub catches ReceiverError
         vm.expectRevert();
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
     }
 
     function test_handleRebalance_revert_emptyInstructions() public {
         CCIPHelpers.AdapterInstructions[]
             memory instructions = new CCIPHelpers.AdapterInstructions[](0);
 
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
         vm.expectRevert();
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
     }
 
     function test_handleRebalance_revert_zeroAmount() public {
@@ -277,9 +271,8 @@ contract HandleRebalanceTest is Test {
             targetAmount: 0
         });
 
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
         vm.expectRevert();
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
     }
 }

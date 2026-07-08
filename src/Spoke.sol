@@ -9,7 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IYieldSource} from "./interfaces/IYieldSource.sol";
-import {ZeroAddress, NotHub, AdapterNotFound, InvalidMessageType, AmountCannotBeZero, InvalidConstructorArguments} from "./errors/spokeErrors.sol";
+import {ZeroAddress, NotHub, AdapterNotFound, InvalidMessageType, AmountCannotBeZero, InvalidConstructorArguments, InvalidConfirmIndex, ConfirmAlreadyResolved, ConfirmFundsUnavailable, PendingConfirmsOutstanding} from "./errors/spokeErrors.sol";
 
 /// @title SpokeVault
 /// @notice Receives CCIP instructions from the HubVault and manages capital deployment
@@ -48,6 +48,21 @@ contract SpokeVault is CCIPReceiver, Ownable {
         uint256 balance;
     }
 
+    /// @notice A confirm message whose outbound ccipSend failed and is queued for retry
+    /// @dev WI-2d reconciliation record. Deliberately minimal — spokeBalance is NOT stored
+    ///      here, it is recomputed fresh at retry time so a stale snapshot is never resent.
+    struct PendingConfirm {
+        /// @dev Which outbound message type this confirm is (CONFIRM_RECEIPT, CONFIRM_REBALANCE,
+        ///      CONFIRM_WITHDRAWAL, or REPORT_BALANCE response)
+        CCIPHelpers.MessageType messageType;
+        /// @dev The messageId being confirmed — echoed from the originating hub message
+        bytes32 messageId;
+        /// @dev USDC amount to attach on retry — 0 for token-less confirms
+        uint256 actualAmount;
+        /// @dev True once successfully retried — resolved entries are inert
+        bool resolved;
+    }
+
     // =========================================================================
     // State Variables
     // =========================================================================
@@ -80,6 +95,11 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      Kept small by design — 3 to 5 protocols max per spoke in v1.
     bytes32[] public activeAdapters;
 
+    /// @notice Queue of confirm messages whose outbound ccipSend failed and await retry
+    /// @dev WI-2d — see PendingConfirm. Never shrinks; resolved entries stay for history and
+    ///      are skipped on retry. Grows only when LINK is exhausted or the router hiccups.
+    PendingConfirm[] public pendingConfirms;
+
     // =========================================================================
     // Events
     // =========================================================================
@@ -97,6 +117,41 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @param oldHub Previous Hub address
     /// @param newHub New Hub address
     event HubUpdated(address indexed oldHub, address indexed newHub);
+
+    /// @notice Emitted when a single DEPOSIT instruction is skipped instead of reverting
+    /// @dev Skip reasons: zero amount, unknown/removed adapter, or adapter.deposit() reverted.
+    ///      The instruction's amount is left as spoke idle — never lost, just undeployed.
+    /// @param protocolId The adapter identifier the instruction targeted
+    /// @param amount The amount that was left idle
+    /// @param reason Raw revert reason bytes, or a short ASCII literal for validation skips
+    event DepositInstructionFailed(bytes32 indexed protocolId, uint256 amount, bytes reason);
+
+    /// @notice Emitted when a single REBALANCE instruction is skipped instead of reverting
+    /// @param source The source adapter identifier
+    /// @param target The target adapter identifier
+    /// @param amount The amount that could not be moved
+    /// @param reason Raw revert reason bytes, or a short ASCII literal for validation skips
+    event RebalanceInstructionFailed(bytes32 indexed source, bytes32 indexed target, uint256 amount, bytes reason);
+
+    /// @notice Emitted whenever a WITHDRAW_AMOUNT recall returns less than the hub requested
+    /// @param requested The amount the hub asked for
+    /// @param actualPulled The amount actually pulled from idle + adapters
+    event RecallShortfall(uint256 requested, uint256 actualPulled);
+
+    /// @notice Emitted when an outbound confirm's ccipSend fails and is queued for retry
+    /// @param index Index into pendingConfirms where this record was stored
+    /// @param messageType The message type that failed to send
+    /// @param messageId The messageId of the failed confirm
+    event ConfirmSendFailed(uint256 indexed index, CCIPHelpers.MessageType messageType, bytes32 messageId);
+
+    /// @notice Emitted when a queued confirm is successfully retried via retryConfirm
+    /// @param index Index into pendingConfirms that was resolved
+    event ConfirmRetried(uint256 indexed index);
+
+    /// @notice Emitted when owner deploys parked spoke idle into a registered adapter
+    /// @param protocolId The adapter identifier idle was deployed into
+    /// @param amount The amount deployed
+    event IdleDeployed(bytes32 indexed protocolId, uint256 amount);
 
     // =========================================================================
     // Constructor
@@ -178,10 +233,64 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      Pending in-flight messages from the old Hub will be rejected on arrival.
     ///      Ensure no critical messages are in-flight before calling.
     /// @param _hub New HubVault address on Ethereum
+    /// @dev WI-6 guard: reverts while any pendingConfirms entry is unresolved. A confirm
+    ///      queued under the old Hub relationship (messageId semantics, expected sender)
+    ///      could resolve incorrectly — or not at all — after HUB is repointed. Resolve or
+    ///      wait out every queued confirm via retryConfirm() before rotating Hub.
     function setHub(address _hub) external onlyOwner {
         if (_hub == address(0)) revert ZeroAddress();
+        if (_hasUnresolvedConfirms()) revert PendingConfirmsOutstanding();
         emit HubUpdated(HUB, _hub);
         HUB = _hub;
+    }
+
+    /// @notice Deploys parked spoke idle USDC into a registered adapter
+    /// @dev v1: onlyOwner. Spoke idle can accumulate from partial DEPOSIT skips (WI-2c),
+    ///      shortfalls left over after a WITHDRAW_AMOUNT recall, or direct transfers.
+    ///      This lets an operator redeploy that idle instead of it sitting unproductively.
+    ///      Races with retryConfirm() on token-carrying confirms — see ConfirmFundsUnavailable.
+    /// @param _protocolId Target adapter identifier — must be currently registered and active
+    /// @param _amount Amount of spoke idle USDC to deposit
+    function deployIdle(bytes32 _protocolId, uint256 _amount) external onlyOwner {
+        if (_amount == 0) revert AmountCannotBeZero();
+        AdapterInfo memory _adapter = adapters[_protocolId];
+        if (!_adapter.exists) revert AdapterNotFound();
+        ASSET.forceApprove(address(_adapter.adapter), _amount);
+        _adapter.adapter.deposit(_amount);
+        emit IdleDeployed(_protocolId, _amount);
+    }
+
+    /// @notice Retries a previously-failed confirm send
+    /// @dev Permissionless — anyone can pay gas to unstick the queue. Rebuilds the confirm
+    ///      message fresh (spokeBalance recomputed at call time, not from the failure moment)
+    ///      and resends. Token-carrying confirms re-verify the USDC is still held by this
+    ///      contract — if deployIdle() redeployed it in the interim, this reverts with
+    ///      ConfirmFundsUnavailable rather than attempting to send tokens the spoke no longer
+    ///      holds (WI-2d's documented conservative choice for the retryConfirm/deployIdle race).
+    /// @param index Index into pendingConfirms to retry
+    function retryConfirm(uint256 index) external {
+        if (index >= pendingConfirms.length) revert InvalidConfirmIndex();
+        PendingConfirm memory pc = pendingConfirms[index];
+        if (pc.resolved) revert ConfirmAlreadyResolved();
+        if (pc.actualAmount > 0 && ASSET.balanceOf(address(this)) < pc.actualAmount) {
+            revert ConfirmFundsUnavailable();
+        }
+
+        Client.EVM2AnyMessage memory ccipMessage = _buildConfirmMessage(
+            pc.messageType,
+            pc.messageId,
+            pc.actualAmount
+        );
+        IRouterClient router = IRouterClient(getRouter());
+        if (pc.actualAmount > 0) {
+            ASSET.forceApprove(address(router), pc.actualAmount);
+        }
+        uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
+        LINK.forceApprove(address(router), fee);
+        router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
+
+        pendingConfirms[index].resolved = true;
+        emit ConfirmRetried(index);
     }
 
     // =========================================================================
@@ -234,51 +343,40 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      After depositing, sends CONFIRM_RECEIPT back to hub carrying the new aggregated
     ///      spoke balance so hub can update spokeBalances[] and decrement inTransitAssets.
     ///      Uses forceApprove to handle USDT-like tokens that revert on non-zero allowance.
+    /// @dev WI-2c: instructions are no longer all-or-nothing. Because the DEPOSIT's tokens
+    ///      arrive as a single lump-sum CCIP transfer covering every instruction's amount
+    ///      combined, a hard revert on one bad instruction would roll back the whole transfer
+    ///      and strand every valid instruction's amount in CCIP limbo too (see docs/revert-audit.md
+    ///      #5-#7). Each instruction is now independently attempted: zero amount, an unknown/
+    ///      removed adapter, or a reverting adapter.deposit() call are all skipped with a
+    ///      DepositInstructionFailed event, leaving that instruction's amount as spoke idle
+    ///      (which _aggregatedSpokeBalance now counts, so hub accounting stays exact — WI-2b).
+    ///      The outbound CONFIRM_RECEIPT itself never hard-reverts the handler either — see
+    ///      _sendOrQueueConfirm (WI-2d).
     /// @param _message Decoded CCIP message containing adapter instructions with protocol ids and amounts
     function _handleDeposit(CCIPHelpers.CcipMessage memory _message) internal {
         if (_message.instructions.length == 0) revert InvalidMessageType();
         for (uint256 i = 0; i < _message.instructions.length; i++) {
-            if (_message.instructions[i].amount == 0) {
-                revert AmountCannotBeZero();
+            bytes32 protocolId = _message.instructions[i].adapter;
+            uint256 amount = _message.instructions[i].amount;
+            if (amount == 0) {
+                emit DepositInstructionFailed(protocolId, amount, bytes("zero amount"));
+                continue;
             }
-            AdapterInfo memory _adapter = adapters[
-                _message.instructions[i].adapter
-            ];
-            if (!_adapter.exists) revert AdapterNotFound();
-            ASSET.forceApprove(
-                address(_adapter.adapter),
-                _message.instructions[i].amount
-            );
-            _adapter.adapter.deposit(_message.instructions[i].amount);
+            AdapterInfo memory _adapter = adapters[protocolId];
+            if (!_adapter.exists) {
+                emit DepositInstructionFailed(protocolId, amount, bytes("adapter not found"));
+                continue;
+            }
+            ASSET.forceApprove(address(_adapter.adapter), amount);
+            try _adapter.adapter.deposit(amount) {
+                // success — funds now deployed
+            } catch (bytes memory reason) {
+                ASSET.forceApprove(address(_adapter.adapter), 0);
+                emit DepositInstructionFailed(protocolId, amount, reason);
+            }
         }
-        Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](0);
-        CCIPHelpers.AdapterInstructions[]
-            memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
-        Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
-            receiver: abi.encode(HUB),
-            data: CCIPHelpers.encode(
-                CCIPHelpers.CcipMessage({
-                    messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
-                    instructions: _instructions,
-                    spokeBalance: _aggregatedSpokeBalance(),
-                    reportTimestamp: block.timestamp,
-                    messageId: _message.messageId
-                })
-            ),
-            tokenAmounts: tokenAmount,
-            feeToken: address(LINK),
-            extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
-                    allowOutOfOrderExecution: false
-                })
-            )
-        });
-        IRouterClient router = IRouterClient(getRouter());
-        uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
-        LINK.forceApprove(address(router), fee);
-        router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
+        _sendOrQueueConfirm(CCIPHelpers.MessageType.CONFIRM_RECEIPT, _message.messageId, 0);
     }
 
     /// @notice Handles REBALANCE — moves capital between adapters on this spoke chain
@@ -289,6 +387,15 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      so hub can refresh spokeBalances[] and lastReportTimestamp[].
     ///      Note: the @dev comment in the original incorrectly described this as a withdrawal —
     ///      this handler does NOT send tokens back to hub.
+    /// @dev WI-2c: no CCIP tokens are attached to REBALANCE, but the loop performs real
+    ///      adapter.withdraw/deposit calls — a hard revert on one bad instruction would
+    ///      unwind an earlier instruction's already-executed move within the same call frame
+    ///      and permanently block the CONFIRM_REBALANCE the hub is waiting on for a balance
+    ///      refresh (docs/revert-audit.md #10-#13). Each instruction is now independently
+    ///      attempted: zero amount, unknown/removed adapter, or a reverting withdraw/deposit
+    ///      call are skipped with a RebalanceInstructionFailed event. The source pull is
+    ///      clamped to the source adapter's real balance to remove the most common revert
+    ///      cause outright.
     /// @param _message Decoded CCIP message with instructions specifying source adapter,
     ///                 target adapter, and amount to move for each operation
     function _handleRebalance(
@@ -296,59 +403,42 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ) internal {
         if (_message.instructions.length == 0) revert InvalidMessageType();
         for (uint256 i = 0; i < _message.instructions.length; i++) {
-            if (_message.instructions[i].amount == 0) {
-                revert AmountCannotBeZero();
+            bytes32 sourceId = _message.instructions[i].adapter;
+            bytes32 targetId = _message.instructions[i].targetAdapter;
+            uint256 amount = _message.instructions[i].amount;
+            if (amount == 0) {
+                emit RebalanceInstructionFailed(sourceId, targetId, amount, bytes("zero amount"));
+                continue;
             }
-            AdapterInfo memory _sourceAdapter = adapters[
-                _message.instructions[i].adapter
-            ];
-            AdapterInfo memory _targetAdapter = adapters[
-                _message.instructions[i].targetAdapter
-            ];
-            if (
-                _sourceAdapter.exists == false || _targetAdapter.exists == false
-            ) revert AdapterNotFound();
-            _sourceAdapter.adapter.withdraw(_message.instructions[i].amount);
-            ASSET.forceApprove(
-                address(_targetAdapter.adapter),
-                _message.instructions[i].amount
-            );
-            _targetAdapter.adapter.deposit(_message.instructions[i].amount);
+            AdapterInfo memory _sourceAdapter = adapters[sourceId];
+            AdapterInfo memory _targetAdapter = adapters[targetId];
+            if (!_sourceAdapter.exists || !_targetAdapter.exists) {
+                emit RebalanceInstructionFailed(sourceId, targetId, amount, bytes("adapter not found"));
+                continue;
+            }
+
+            uint256 sourceTotal = _sourceAdapter.adapter.totalAssets();
+            uint256 pullAmount = amount > sourceTotal ? sourceTotal : amount;
+            if (pullAmount == 0) {
+                emit RebalanceInstructionFailed(sourceId, targetId, amount, bytes("source empty"));
+                continue;
+            }
+
+            try _sourceAdapter.adapter.withdraw(pullAmount) {
+            } catch (bytes memory reason) {
+                emit RebalanceInstructionFailed(sourceId, targetId, amount, reason);
+                continue;
+            }
+
+            ASSET.forceApprove(address(_targetAdapter.adapter), pullAmount);
+            try _targetAdapter.adapter.deposit(pullAmount) {
+            } catch (bytes memory reason) {
+                ASSET.forceApprove(address(_targetAdapter.adapter), 0);
+                // pulled funds stay on spoke as idle — not lost, just undeployed
+                emit RebalanceInstructionFailed(sourceId, targetId, pullAmount, reason);
+            }
         }
-        Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](0);
-        CCIPHelpers.AdapterInstructions[]
-            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
-        _instructions[0] = CCIPHelpers.AdapterInstructions({
-            adapter: bytes32(0),
-            amount: 0,
-            targetAdapter: bytes32(0),
-            targetAmount: 0
-        });
-        Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
-            receiver: abi.encode(HUB),
-            data: CCIPHelpers.encode(
-                CCIPHelpers.CcipMessage({
-                    messageType: CCIPHelpers.MessageType.CONFIRM_REBALANCE,
-                    instructions: _instructions,
-                    spokeBalance: _aggregatedSpokeBalance(),
-                    reportTimestamp: block.timestamp,
-                    messageId: _message.messageId
-                })
-            ),
-            tokenAmounts: tokenAmount,
-            feeToken: address(LINK),
-            extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
-                    allowOutOfOrderExecution: false
-                })
-            )
-        });
-        IRouterClient router = IRouterClient(getRouter());
-        uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
-        LINK.forceApprove(address(router), fee);
-        router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
+        _sendOrQueueConfirm(CCIPHelpers.MessageType.CONFIRM_REBALANCE, _message.messageId, 0);
     }
 
     /// @notice Handles WITHDRAW_AMOUNT — pulls requested USDC from adapters and sends back to hub
@@ -359,81 +449,76 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      Proportional withdrawal preserves allocation ratios across adapters.
     ///      Last adapter receives remainder to avoid dust from integer division.
     ///      Hub uses messageId in CONFIRM_WITHDRAWAL to match the pending withdrawal and settle it.
+    /// @dev WI-2b/2c rewrite. Spoke idle is drained first (up to the full request), then any
+    ///      remaining shortfall is pulled proportionally from active adapters. Each adapter
+    ///      pull is capped at that adapter's real totalAssets() — including the last adapter's
+    ///      remainder — which removes both the exact-full-recall wei-overflow revert and the
+    ///      Morpho mulDivDown-report-vs-round-up-withdraw mismatch by construction (never asks
+    ///      an adapter for more than it reports holding). The division-by-zero on an empty
+    ///      spoke is guarded. The CCIP token amount and RecallShortfall event always reflect
+    ///      the truthful actualPulled, never the hub's requested amount — the hub must trust
+    ///      only the delivered token envelope (destTokenAmounts), consistent with WI-4.
+    ///      If actualPulled == 0 a token-less CONFIRM_WITHDRAWAL is still sent so the hub
+    ///      learns the true state instead of waiting forever on a message that never comes.
     /// @param _message Decoded CCIP message with single instruction — amount is the shortfall to recall
     function _handleWithdrawalWithAmount(
         CCIPHelpers.CcipMessage memory _message
     ) internal {
         if (_message.instructions.length == 0) revert InvalidMessageType();
-        bytes32[] memory _adapters = activeAdapters;
-        if (_adapters.length == 0) revert AdapterNotFound();
         uint256 amountRequested = _message.instructions[0].amount;
 
-        // first pass — compute total spoke balance for proportional withdrawal
-        uint256 _totalSpokeBalance;
-        uint256 _lastIndex;
-        for (uint256 i = 0; i < _adapters.length; i++) {
-            if (!adapters[_adapters[i]].exists) continue;
-            _totalSpokeBalance += adapters[_adapters[i]].adapter.totalAssets();
-            _lastIndex = i;
-        }
+        // spoke idle drains first
+        uint256 idleBalance = ASSET.balanceOf(address(this));
+        uint256 totalPulled = idleBalance >= amountRequested
+            ? amountRequested
+            : idleBalance;
+        uint256 remaining = amountRequested - totalPulled;
 
-        // second pass — withdraw proportionally, last adapter absorbs rounding remainder
-        uint256 totalPulled;
-        for (uint256 i = 0; i < _adapters.length; i++) {
-            if (!adapters[_adapters[i]].exists) continue;
-            uint256 pullAmount;
-            if (i == _lastIndex) {
-                pullAmount = amountRequested - totalPulled;
-            } else {
-                pullAmount =
-                    (amountRequested *
-                        adapters[_adapters[i]].adapter.totalAssets()) /
-                    _totalSpokeBalance;
+        if (remaining > 0) {
+            bytes32[] memory _adapters = activeAdapters;
+            uint256 _totalSpokeBalance;
+            uint256 _lastIndex;
+            bool anyActive;
+            for (uint256 i = 0; i < _adapters.length; i++) {
+                if (!adapters[_adapters[i]].exists) continue;
+                _totalSpokeBalance += adapters[_adapters[i]].adapter.totalAssets();
+                _lastIndex = i;
+                anyActive = true;
             }
-            adapters[_adapters[i]].adapter.withdraw(pullAmount);
-            totalPulled += pullAmount;
+
+            if (anyActive && _totalSpokeBalance > 0) {
+                uint256 pulledFromAdapters;
+                for (uint256 i = 0; i < _adapters.length; i++) {
+                    if (!adapters[_adapters[i]].exists) continue;
+                    uint256 adapterBalance = adapters[_adapters[i]].adapter.totalAssets();
+                    uint256 pullAmount;
+                    if (i == _lastIndex) {
+                        uint256 want = remaining - pulledFromAdapters;
+                        pullAmount = want > adapterBalance ? adapterBalance : want;
+                    } else {
+                        uint256 proportional = (remaining * adapterBalance) /
+                            _totalSpokeBalance;
+                        pullAmount = proportional > adapterBalance
+                            ? adapterBalance
+                            : proportional;
+                    }
+                    if (pullAmount == 0) continue;
+                    adapters[_adapters[i]].adapter.withdraw(pullAmount);
+                    pulledFromAdapters += pullAmount;
+                }
+                totalPulled += pulledFromAdapters;
+            }
         }
 
-        // send USDC + CONFIRM_WITHDRAWAL back to hub
-        Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](1);
-        tokenAmount[0] = Client.EVMTokenAmount({
-            token: address(ASSET),
-            amount: amountRequested
-        });
-        CCIPHelpers.AdapterInstructions[]
-            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
-        _instructions[0] = CCIPHelpers.AdapterInstructions({
-            adapter: bytes32(0),
-            amount: amountRequested,
-            targetAdapter: bytes32(0),
-            targetAmount: 0
-        });
-        Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
-            receiver: abi.encode(HUB),
-            data: CCIPHelpers.encode(
-                CCIPHelpers.CcipMessage({
-                    messageType: CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
-                    instructions: _instructions,
-                    spokeBalance: _aggregatedSpokeBalance(),
-                    reportTimestamp: block.timestamp,
-                    messageId: _message.messageId
-                })
-            ),
-            tokenAmounts: tokenAmount,
-            feeToken: address(LINK),
-            extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
-                    allowOutOfOrderExecution: false
-                })
-            )
-        });
-        IRouterClient router = IRouterClient(getRouter());
-        uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
-        ASSET.forceApprove(address(router), amountRequested);
-        LINK.forceApprove(address(router), fee);
-        router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
+        if (totalPulled < amountRequested) {
+            emit RecallShortfall(amountRequested, totalPulled);
+        }
+
+        _sendOrQueueConfirm(
+            CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
+            _message.messageId,
+            totalPulled
+        );
     }
 
     /// @notice Handles REPORT_BALANCE — responds to hub's balance refresh request
@@ -444,59 +529,167 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      No tokens are moved — this is an accounting-only message.
     /// @param _message Decoded CCIP message — messageId is forwarded back to hub for withdrawal matching
     function _reportBalance(CCIPHelpers.CcipMessage memory _message) internal {
-        Client.EVMTokenAmount[]
-            memory tokenAmount = new Client.EVMTokenAmount[](0);
+        _sendOrQueueConfirm(CCIPHelpers.MessageType.REPORT_BALANCE, _message.messageId, 0);
+    }
+
+    // =========================================================================
+    // Internal Confirm Dispatch Helpers (WI-2d)
+    // =========================================================================
+
+    /// @notice Builds the outbound CCIP message for any confirm/report type
+    /// @dev spokeBalance is always computed fresh at call time — critical for retryConfirm,
+    ///      which must never resend a stale snapshot from the moment of original failure.
+    ///      Instructions are always empty for confirm messages: none of the hub-side handlers
+    ///      read the instructions field on a confirm — settlement trusts only the token
+    ///      envelope (destTokenAmounts) and spokeBalance, consistent with WI-4's "trust the
+    ///      token envelope, never the payload's claimed amount."
+    /// @param _type The outbound message type
+    /// @param _messageId The messageId being confirmed/reported
+    /// @param _tokenAmount USDC to attach — 0 for token-less messages
+    function _buildConfirmMessage(
+        CCIPHelpers.MessageType _type,
+        bytes32 _messageId,
+        uint256 _tokenAmount
+    ) internal view returns (Client.EVM2AnyMessage memory) {
+        Client.EVMTokenAmount[] memory tokenAmount = new Client.EVMTokenAmount[](
+            _tokenAmount > 0 ? 1 : 0
+        );
+        if (_tokenAmount > 0) {
+            tokenAmount[0] = Client.EVMTokenAmount({
+                token: address(ASSET),
+                amount: _tokenAmount
+            });
+        }
         CCIPHelpers.AdapterInstructions[]
             memory _instructions = new CCIPHelpers.AdapterInstructions[](0);
-        Client.EVM2AnyMessage memory ccipMessage = Client.EVM2AnyMessage({
-            receiver: abi.encode(HUB),
-            data: CCIPHelpers.encode(
-                CCIPHelpers.CcipMessage({
-                    messageType: CCIPHelpers.MessageType.REPORT_BALANCE,
-                    instructions: _instructions,
-                    spokeBalance: _aggregatedSpokeBalance(),
-                    reportTimestamp: block.timestamp,
-                    messageId: _message.messageId
-                })
-            ),
-            tokenAmounts: tokenAmount,
-            feeToken: address(LINK),
-            extraArgs: Client._argsToBytes(
-                Client.EVMExtraArgsV2({
-                    gasLimit: 200_000,
-                    allowOutOfOrderExecution: false
-                })
-            )
-        });
+        // _tokenAmount (if any) is still sitting in spoke idle at this point in execution —
+        // it only actually leaves once the router pulls it as part of this same ccipSend.
+        // Subtract it so the reported balance reflects post-transfer state, not a snapshot
+        // that double-counts funds already committed to leave in this very message.
+        return
+            Client.EVM2AnyMessage({
+                receiver: abi.encode(HUB),
+                data: CCIPHelpers.encode(
+                    CCIPHelpers.CcipMessage({
+                        messageType: _type,
+                        instructions: _instructions,
+                        spokeBalance: _aggregatedSpokeBalance() - _tokenAmount,
+                        reportTimestamp: block.timestamp,
+                        messageId: _messageId
+                    })
+                ),
+                tokenAmounts: tokenAmount,
+                feeToken: address(LINK),
+                extraArgs: Client._argsToBytes(
+                    Client.EVMExtraArgsV2({
+                        gasLimit: 200_000,
+                        allowOutOfOrderExecution: false
+                    })
+                )
+            });
+    }
+
+    /// @notice Attempts to send a confirm/report message; queues it for retry on failure
+    /// @dev WI-2d. This is the mechanism that prevents a LINK-exhaustion or router failure
+    ///      on the outbound leg from rolling back the fund-touching work already done in the
+    ///      calling handler (docs/revert-audit.md #8, #14, #19, #20). getFee and ccipSend are
+    ///      both external calls, wrapped in try/catch — any failure degrades to a queued
+    ///      PendingConfirm + ConfirmSendFailed event rather than reverting.
+    ///      NatSpec-documented observability contract: the hub cannot observe a spoke-side
+    ///      failure it was never told about. This queue plus its events, together with
+    ///      permissionless retryConfirm(), IS the observability contract — the WI-5 hub-side
+    ///      per-message transit reconciliation is the last resort if a confirm truly never
+    ///      lands (e.g. spoke abandoned).
+    /// @param _type The outbound message type
+    /// @param _messageId The messageId being confirmed/reported
+    /// @param _tokenAmount USDC to attach — 0 for token-less messages
+    function _sendOrQueueConfirm(
+        CCIPHelpers.MessageType _type,
+        bytes32 _messageId,
+        uint256 _tokenAmount
+    ) internal {
+        Client.EVM2AnyMessage memory ccipMessage = _buildConfirmMessage(
+            _type,
+            _messageId,
+            _tokenAmount
+        );
         IRouterClient router = IRouterClient(getRouter());
-        uint256 fee = router.getFee(HUB_CHAIN_SELECTOR, ccipMessage);
-        LINK.forceApprove(address(router), fee);
-        router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
+        if (_tokenAmount > 0) {
+            ASSET.forceApprove(address(router), _tokenAmount);
+        }
+        try router.getFee(HUB_CHAIN_SELECTOR, ccipMessage) returns (uint256 fee) {
+            LINK.forceApprove(address(router), fee);
+            try router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage) returns (bytes32) {
+                // sent successfully
+            } catch {
+                _queueConfirm(_type, _messageId, _tokenAmount);
+            }
+        } catch {
+            _queueConfirm(_type, _messageId, _tokenAmount);
+        }
+    }
+
+    /// @notice Persists a failed confirm send for later retry
+    /// @param _type The outbound message type
+    /// @param _messageId The messageId being confirmed/reported
+    /// @param _tokenAmount USDC to attach on retry — 0 for token-less messages
+    function _queueConfirm(
+        CCIPHelpers.MessageType _type,
+        bytes32 _messageId,
+        uint256 _tokenAmount
+    ) internal {
+        pendingConfirms.push(
+            PendingConfirm({
+                messageType: _type,
+                messageId: _messageId,
+                actualAmount: _tokenAmount,
+                resolved: false
+            })
+        );
+        emit ConfirmSendFailed(pendingConfirms.length - 1, _type, _messageId);
+    }
+
+    /// @notice True if any pendingConfirms entry is still unresolved
+    /// @dev Used by setHub() (WI-6) to block Hub rotation while a confirm is in flight.
+    function _hasUnresolvedConfirms() internal view returns (bool) {
+        uint256 length = pendingConfirms.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (!pendingConfirms[i].resolved) return true;
+        }
+        return false;
     }
 
     // =========================================================================
     // Internal View Helpers
     // =========================================================================
 
-    /// @notice Sums totalAssets() across all currently active adapters
-    /// @dev Skips adapters where exists == false — removed adapters report zero balance.
+    /// @notice Sums spoke idle USDC plus totalAssets() across all currently active adapters
+    /// @dev WI-2b: idle is first-class. A direct USDC transfer, or leftover from a partial
+    ///      DEPOSIT skip / WITHDRAW_AMOUNT shortfall, is now counted — previously invisible
+    ///      to the hub. Skips adapters where exists == false — removed adapters report zero.
     ///      Called before every outbound message to give hub an accurate spoke snapshot.
     ///      Value may lag slightly if adapters accrue yield between reports — accepted v1 tradeoff.
-    /// @return aggregatedSpokeBalance Total USDC managed across all active adapters including yield
+    /// @return aggregatedSpokeBalance Idle USDC plus total USDC managed across all active adapters
     function _aggregatedSpokeBalance()
         internal
         view
         returns (uint256 aggregatedSpokeBalance)
     {
+        aggregatedSpokeBalance = ASSET.balanceOf(address(this));
         bytes32[] memory _activeAdapters = activeAdapters;
         uint256 _length = _activeAdapters.length;
-        if (_length == 0) return 0;
         for (uint256 i = 0; i < _length; i++) {
             if (adapters[_activeAdapters[i]].exists == false) continue;
             aggregatedSpokeBalance += adapters[_activeAdapters[i]]
                 .adapter
                 .totalAssets();
         }
+    }
+
+    /// @notice Returns the length of the pendingConfirms array
+    /// @return Length of the pendingConfirms array
+    function pendingConfirmsLength() external view returns (uint256) {
+        return pendingConfirms.length;
     }
 
     // =========================================================================

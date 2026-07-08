@@ -235,7 +235,10 @@ contract HandleRebalanceTest is Test {
     // Revert paths
     // =========================================================================
 
-    function test_handleRebalance_revert_sourceAdapterNotFound() public {
+    /// @dev WI-2c changed this from a hard revert to a skip+event: an unknown source
+    /// adapter must not strand the rest of a multi-instruction REBALANCE batch, nor block
+    /// the CONFIRM_REBALANCE the hub is waiting on. See docs/revert-audit.md #11.
+    function test_handleRebalance_unknownSourceAdapter_skipsWithoutReverting() public {
         // bytes32(0) not registered as adapter
         CCIPHelpers.AdapterInstructions[]
             memory instructions = new CCIPHelpers.AdapterInstructions[](1);
@@ -247,9 +250,10 @@ contract HandleRebalanceTest is Test {
         });
 
         vm.prank(rebalancer);
-        // CCIP delivers but spoke reverts — hub catches ReceiverError
-        vm.expectRevert();
+        // must not revert — the instruction is skipped and CONFIRM_REBALANCE still lands
         hub.rebalance(chainSelector, instructions);
+
+        assertGt(hub.lastReportTimestamp(chainSelector), 0);
     }
 
     function test_handleRebalance_revert_emptyInstructions() public {
@@ -261,7 +265,9 @@ contract HandleRebalanceTest is Test {
         hub.rebalance(chainSelector, instructions);
     }
 
-    function test_handleRebalance_revert_zeroAmount() public {
+    /// @dev WI-2c changed this from a hard revert to a skip+event — see
+    /// docs/revert-audit.md #10.
+    function test_handleRebalance_zeroAmountInstruction_skipsWithoutReverting() public {
         CCIPHelpers.AdapterInstructions[]
             memory instructions = new CCIPHelpers.AdapterInstructions[](1);
         instructions[0] = CCIPHelpers.AdapterInstructions({
@@ -272,7 +278,9 @@ contract HandleRebalanceTest is Test {
         });
 
         vm.prank(rebalancer);
-        vm.expectRevert();
+        // must not revert — the zero-amount instruction is skipped
         hub.rebalance(chainSelector, instructions);
+
+        assertGt(hub.lastReportTimestamp(chainSelector), 0);
     }
 }

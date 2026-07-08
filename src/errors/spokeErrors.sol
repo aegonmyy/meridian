@@ -21,3 +21,17 @@ error AmountCannotBeZero();
 
 ///@notice Thrown when any of the constructor argument is invalid
 error InvalidConstructorArguments();
+
+/// @notice Thrown when retryConfirm is called with an index outside pendingConfirms bounds
+error InvalidConfirmIndex();
+
+/// @notice Thrown when retryConfirm is called for an already-resolved pending confirm
+error ConfirmAlreadyResolved();
+
+/// @notice Thrown when a token-carrying retryConfirm's USDC is no longer held by the spoke
+/// @dev Can happen if deployIdle() redeployed the parked USDC before the retry landed —
+///      see WI-2d race note in Spoke NatSpec.
+error ConfirmFundsUnavailable();
+
+/// @notice Thrown when setHub is called while pendingConfirms still has unresolved entries
+error PendingConfirmsOutstanding();

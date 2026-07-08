@@ -39,3 +39,10 @@ error SpokeExists();
 
 /// @notice Thrown when withdrawal results in zero assets
 error ZeroWithdrawal();
+
+/// @notice Thrown when sendToSpoke would ship more idle than is currently unreserved
+/// @dev requested: sum of instruction amounts. idle: current idle balance. reserved: reservedAssets.
+error InsufficientUnreservedIdle(uint256 requested, uint256 idle, uint256 reserved);
+
+/// @notice Thrown when a recall amount is zero
+error InvalidRecallAmount();

@@ -10,7 +10,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal} from "./errors/hubErrors.sol";
+import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal, InsufficientUnreservedIdle, InvalidRecallAmount} from "./errors/hubErrors.sol";
 
 /// @title HubVault
 /// @notice ERC4626 vault on Ethereum — entry point for all user deposits and withdrawals.
@@ -202,6 +202,15 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         uint256 amount
     );
 
+    /// @notice Emitted when a CONFIRM_WITHDRAWAL arrives that matches no pendingWithdrawal
+    /// @dev This is the WI-3 rebalancer-driven recall completion signal — the off-chain
+    ///      agent watches for this to sequence "recall from overweight chain, then propose
+    ///      allocation to the now-idle funds." The arrived tokens become ordinary hub idle;
+    ///      no further hub-side action is needed.
+    /// @param chainSelector Chain selector the recall was sourced from
+    /// @param amount Actual USDC amount that arrived (from the CCIP token envelope)
+    event RecallCompleted(uint64 indexed chainSelector, uint256 amount);
+
     // =========================================================================
     // Modifiers
     // =========================================================================
@@ -364,6 +373,17 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.AdapterInstructions[] memory _instructions
     ) external onlyRebalancer {
         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
+        // WI-3: authoritative solvency guard — reservedAssets is idle that a pending
+        // withdrawal already depends on. Summed across all instructions (not just the
+        // first) so a multi-instruction deposit can't undercount its own total ask.
+        uint256 totalAmount;
+        for (uint256 i = 0; i < _instructions.length; i++) {
+            totalAmount += _instructions[i].amount;
+        }
+        uint256 idle = _idleBalance();
+        if (idle < reservedAssets + totalAmount) {
+            revert InsufficientUnreservedIdle(totalAmount, idle, reservedAssets);
+        }
         bytes32 _messageId = _newMessageId(bytes32(uint256(_chainSelector)));
         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
             messageType: CCIPHelpers.MessageType.DEPOSIT,
@@ -376,10 +396,14 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     }
 
     /// @notice Sends a recall instruction to a spoke to return funds to hub via CCIP
-    /// @dev Only callable by Rebalancer or hub itself (via this.recallFromSpoke in _withdraw).
+    /// @dev Only callable by hub itself, via this.recallFromSpoke in _withdraw's Path 3.
     ///      Sends a WITHDRAW_AMOUNT message — instruction only, no tokens attached outbound.
     ///      Spoke pulls proportionally from its adapters and sends tokens back via CCIP.
-    ///      Used in Path 3 withdrawals to retrieve the shortfall not covered by idle.
+    ///      The messageId here matches an existing pendingWithdrawals entry so the arrival
+    ///      callback can settle it — this is what distinguishes this overload from the
+    ///      Rebalancer-driven one below, which creates no pendingWithdrawal and therefore
+    ///      must not accept a caller-supplied id (WI-1 ids are always hub-derived when there
+    ///      is nothing external to match against).
     /// @param _chainSelector CCIP chain selector of the target spoke
     /// @param _instructions Single instruction with adapter=bytes32(0) and amount=shortfall
     /// @param _messageId Matches the pendingWithdrawal entry so callback can settle correctly
@@ -399,6 +423,53 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             messageId: _messageId
         });
         _sendToSpoke(_chainSelector, _message);
+    }
+
+    /// @notice Rebalancer-driven recall — moves capital off an overweight spoke with no
+    ///         pendingWithdrawal attached; the arrived tokens simply become hub idle
+    /// @dev WI-3 (Issue 5, Option A). This is the missing "move weight off a chain" lever —
+    ///      without it the only way capital left a spoke was via a user-triggered Path 3
+    ///      withdrawal. The hub derives its own fresh id via _newMessageId (WI-1); callers
+    ///      never supply one, since there is no pendingWithdrawal to match against.
+    ///      Intended v1 operator flow (see Rebalancer.recallFromSpoke NatSpec for the full
+    ///      sequence): off-chain diff → recallFromSpoke per overweight chain → await
+    ///      RecallCompleted → proposeAllocation sized to the now-idle funds. The on-chain
+    ///      diff engine that would automate this sequencing is explicitly out of scope (v2).
+    /// @param _chainSelector CCIP chain selector of the spoke to recall from
+    /// @param _amount USDC amount to recall — must be nonzero
+    function recallFromSpoke(
+        uint64 _chainSelector,
+        uint256 _amount
+    ) external onlyRebalancer {
+        if (!spokes[_chainSelector].exists) {
+            revert SpokeNotFound();
+        }
+        if (_amount == 0) revert InvalidRecallAmount();
+        CCIPHelpers.AdapterInstructions[]
+            memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+        _instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: bytes32(0),
+            amount: _amount,
+            targetAdapter: bytes32(0),
+            targetAmount: 0
+        });
+        bytes32 _messageId = _newMessageId(bytes32(uint256(_chainSelector)));
+        CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
+            messageType: CCIPHelpers.MessageType.WITHDRAW_AMOUNT,
+            instructions: _instructions,
+            spokeBalance: 0,
+            reportTimestamp: block.timestamp,
+            messageId: _messageId
+        });
+        _sendToSpoke(_chainSelector, _message);
+    }
+
+    /// @notice Returns the USDC balance sitting idle on hub — not deployed or in transit
+    /// @dev External view mirror of _idleBalance(), exposed so Rebalancer can pre-check
+    ///      solvency before dispatching a proposal (WI-3 friendly pre-check).
+    /// @return Idle USDC balance of this contract
+    function idleBalance() external view returns (uint256) {
+        return _idleBalance();
     }
 
     /// @notice Sends intra-spoke rebalance instructions to move capital between adapters
@@ -713,7 +784,11 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         if (
             _message.messageType == CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL
         ) {
-            _handleWithdrawalCallback(_message, _chainSelector);
+            _handleWithdrawalCallback(
+                _message,
+                _chainSelector,
+                message.destTokenAmounts
+            );
         } else if (
             _message.messageType == CCIPHelpers.MessageType.REPORT_BALANCE
         ) {
@@ -816,17 +891,27 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         }
     }
 
-    /// @notice Handles CONFIRM_WITHDRAWAL from spoke — funds arrived, settles pending Path 3 withdrawal
+    /// @notice Handles CONFIRM_WITHDRAWAL from spoke — funds arrived, settles a pending Path 3
+    ///         withdrawal if one matches this id, otherwise this was a Rebalancer-driven
+    ///         recall (WI-3) and the arrived tokens become ordinary hub idle
     /// @dev Spoke sends this after pulling funds from adapters and transferring USDC back to hub.
     ///      By the time this fires, the shortfall USDC has arrived at hub. Combined with
     ///      the idle that was reserved at queue time, hub has enough to settle the withdrawal.
+    ///      actualAmount is read from destTokenAmounts (the CCIP token envelope) — the
+    ///      ground truth of what arrived — not from the payload, which carries no amount
+    ///      for confirm messages post-WI-2 (see docs/revert-audit.md).
     /// @param _message Decoded CCIP message carrying updated spokeBalance and reportTimestamp
     /// @param _chainSelector Source chain selector identifying which spoke sent the message
+    /// @param destTokenAmounts Token envelope delivered alongside this message — ground truth
     function _handleWithdrawalCallback(
         CCIPHelpers.CcipMessage memory _message,
-        uint64 _chainSelector
+        uint64 _chainSelector,
+        Client.EVMTokenAmount[] memory destTokenAmounts
     ) internal {
         bytes32 _messageId = _message.messageId;
+        uint256 actualAmount = destTokenAmounts.length > 0
+            ? destTokenAmounts[0].amount
+            : 0;
         spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
         emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
@@ -840,6 +925,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
                 _messageId
             );
             delete pendingWithdrawals[_messageId];
+        } else {
+            emit RecallCompleted(_chainSelector, actualAmount);
         }
     }
 

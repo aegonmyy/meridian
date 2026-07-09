@@ -141,20 +141,13 @@ contract HubVaultHandler is Test {
         (, bool exists, ) = hub.spokes(selector);
         if (!exists) return;
 
-        // Mirrors the WI-6 removeSpoke guard (spokeBalances[selector] == 0) landing later
-        // in the plan's execution order — skip here in the interim. Before WI-2, sendToSpoke
-        // against an unregistered spoke adapter always reverted internally (no funds ever
-        // left the hub), so this branch was unreachable. WI-2's resilience fix means
-        // sendToSpoke can now genuinely land funds on a spoke, which exposes the known,
-        // not-yet-fixed "removing a funded spoke craters totalAssets()" issue — WI-6 closes
-        // it with an on-chain guard; this mirrors that guard so the fuzz harness doesn't
-        // exercise the gap before then.
-        if (hub.spokeBalances(selector) != 0) return;
-
+        // WI-6 added an on-chain guard (spokeBalances[selector] == 0 and no in-flight legs)
+        // — wrapped in try/catch so the fuzzer also exercises the revert path for a funded
+        // or in-flight spoke, not just the success path.
         vm.prank(owner);
-        hub.removeSpoke(selector);
-
-        ghostCurrentSpoke[selector] = address(0);
+        try hub.removeSpoke(selector) {
+            ghostCurrentSpoke[selector] = address(0);
+        } catch {}
     }
 
     function sendToSpoke(uint256 protocolSeed, uint256 amount) public {

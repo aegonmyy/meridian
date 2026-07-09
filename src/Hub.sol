@@ -10,7 +10,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal, InsufficientUnreservedIdle, InvalidRecallAmount, InsufficientRecallLiquidity, NoPendingWithdrawal, NotWithdrawalOwner, WithdrawalNotYetCancellable, NothingToReconcile, ReconcileTooEarly} from "./errors/hubErrors.sol";
+import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal, InsufficientUnreservedIdle, InvalidRecallAmount, InsufficientRecallLiquidity, NoPendingWithdrawal, NotWithdrawalOwner, WithdrawalNotYetCancellable, NothingToReconcile, ReconcileTooEarly, SpokeNotDrained, SpokeHasInFlightLegs} from "./errors/hubErrors.sol";
 
 /// @title HubVault
 /// @notice ERC4626 vault on Ethereum — entry point for all user deposits and withdrawals.
@@ -172,6 +172,14 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     // TUNE: default from the plan — Open Questions #1, not decided further here.
     uint256 public constant TRANSIT_RECONCILE_DELAY = 7 days;
 
+    /// @notice Count of outstanding in-flight DEPOSIT legs per spoke selector
+    /// @dev WI-6 — incremented in _sendToSpoke alongside inTransitAmount (one per DEPOSIT
+    ///      message sent to that selector), decremented in _handleDepositCallback when that
+    ///      selector's CONFIRM_RECEIPT lands. Guards removeSpoke: disabling a spoke while it
+    ///      has in-flight legs turns their eventual CONFIRM_RECEIPT into NotSpoke poison
+    ///      (the spoke would still be mid-flight but no longer isValidSpoke).
+    mapping(uint64 => uint256) public inTransitToSpoke;
+
     /// @notice Gas limit supplied to the CCIP router for all outbound messages
     /// @dev Configurable by owner. Default 1_500_000 — covers the most expensive spoke
     ///      operations (deposit → adapter → CONFIRM_RECEIPT CCIP send).
@@ -230,6 +238,20 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @notice Emitted when a spoke is disabled via removeSpoke
     /// @param spokeSelector CCIP chain selector of the disabled spoke
     event SpokeRemoved(uint64 indexed spokeSelector);
+
+    /// @notice Emitted when a spoke is disabled via the unsafe forceRemoveSpoke path
+    /// @dev Loud by design — the presence of nonzero danglingBalance or danglingInFlightLegs
+    ///      signals exactly what was skipped and what operational cleanup remains.
+    /// @param spokeSelector CCIP chain selector of the forcibly-disabled spoke
+    /// @param danglingBalance spokeBalances[selector] at the moment of removal — now
+    ///        instantly excluded from totalManagedAssets()
+    /// @param danglingInFlightLegs inTransitToSpoke[selector] at the moment of removal — legs
+    ///        whose eventual CONFIRM_RECEIPT will now revert with NotSpoke
+    event SpokeForceRemoved(
+        uint64 indexed spokeSelector,
+        uint256 danglingBalance,
+        uint256 danglingInFlightLegs
+    );
 
     /// @notice Emitted whenever a spoke reports its current total balance to hub
     /// @dev Fired on CONFIRM_RECEIPT, CONFIRM_REBALANCE, and REPORT_BALANCE callbacks
@@ -434,16 +456,51 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         emit SpokeAdded(_chainSelector, _spokeAddress);
     }
 
-    /// @notice Disables a spoke by setting its exists flag to false
-    /// @dev Emergency mechanism — does not remove from spokeChainSelectors array.
-    ///      Inactive spokes are skipped during iteration via the exists flag.
-    ///      Also clears addressToSelector reverse mapping for the spoke address.
+    /// @notice Disables a spoke by setting its exists flag to false — safe path, default choice
+    /// @dev WI-6 guard: requires spokeBalances[selector] == 0 and no in-flight legs
+    ///      (inTransitToSpoke[selector] == 0). Rationale: removing a FUNDED spoke instantly
+    ///      craters totalManagedAssets() by that spoke's reported balance — a mispricing
+    ///      window that shortchanges every share until re-registered — and turns any
+    ///      still-in-flight CONFIRM_RECEIPT for that selector into NotSpoke poison the moment
+    ///      it lands (isValidSpoke() goes false mid-flight). Drain the spoke (recallFromSpoke
+    ///      until spokeBalances[selector] == 0) and let in-flight legs land first; only then
+    ///      is this safe. For true emergencies where waiting isn't acceptable, see
+    ///      forceRemoveSpoke — the unsafe path is intentionally a separate, loudly-named
+    ///      function so the safe path stays the default.
+    ///      Does not remove from spokeChainSelectors array — inactive spokes are skipped
+    ///      during iteration via the exists flag. Also clears addressToSelector.
     /// @param _chainSelector CCIP chain selector of the spoke to disable
     function removeSpoke(uint64 _chainSelector) external onlyOwner {
         if (spokes[_chainSelector].exists == false) revert SpokeNotFound();
+        if (spokeBalances[_chainSelector] != 0) revert SpokeNotDrained();
+        if (inTransitToSpoke[_chainSelector] != 0) revert SpokeHasInFlightLegs();
         delete addressToSelector[spokes[_chainSelector].spoke];
         spokes[_chainSelector].exists = false;
         emit SpokeRemoved(_chainSelector);
+    }
+
+    /// @notice Emergency: disables a spoke WITHOUT the safety checks removeSpoke enforces
+    /// @dev WI-6. Use only when the safe path (removeSpoke) is genuinely not viable — e.g.
+    ///      the spoke contract itself is compromised and continuing to interact with it
+    ///      (even to drain it) is the greater risk. Skipping the checks means:
+    ///      (a) totalManagedAssets() instantly drops by spokeBalances[selector] — a real,
+    ///      immediate mispricing event against every current shareholder, not merely a
+    ///      cosmetic one; (b) any CONFIRM_RECEIPT still in flight for this selector will
+    ///      revert with NotSpoke on arrival (poisoning that CCIP message permanently — the
+    ///      DEPOSIT's inTransitAmount becomes a WI-5 reconcileTransit candidate once its
+    ///      TRANSIT_RECONCILE_DELAY has passed, since the confirm can now never land).
+    ///      Owner-only, separate from removeSpoke by design so the destructive path is never
+    ///      the accidental default.
+    /// @param _chainSelector CCIP chain selector of the spoke to forcibly disable
+    function forceRemoveSpoke(uint64 _chainSelector) external onlyOwner {
+        if (spokes[_chainSelector].exists == false) revert SpokeNotFound();
+        delete addressToSelector[spokes[_chainSelector].spoke];
+        spokes[_chainSelector].exists = false;
+        emit SpokeForceRemoved(
+            _chainSelector,
+            spokeBalances[_chainSelector],
+            inTransitToSpoke[_chainSelector]
+        );
     }
 
     /// @notice Returns whether an address is currently a valid active spoke
@@ -914,6 +971,19 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             data: CCIPHelpers.encode(_message),
             tokenAmounts: tokenAmount,
             feeToken: address(LINK),
+            // WI-0/WI-6: left false (ordered) — verified against the pinned OffRamp
+            // (offRamp/OffRamp.sol, NonceManager.sol) that the premise for flipping this
+            // ("a failed/reverting message blocks subsequent same-sender messages on the
+            // lane") does not hold. The inbound nonce is incremented in incrementInboundNonce
+            // BEFORE trial execution runs, for every UNTOUCHED->{SUCCESS,FAILURE} transition
+            // — i.e. the nonce advances on the FIRST EXECUTION ATTEMPT regardless of its
+            // outcome, so a message that reverts still unblocks the next one once attempted
+            // (which happens automatically/promptly under normal DON operation). The one
+            // scenario ordered execution genuinely blocks on is a message that is never
+            // attempted at all (stuck UNTOUCHED — a DON/relayer liveness issue, not a
+            // contract-level revert); that is an infra concern out-of-order execution would
+            // not fully insulate against either for messages still ahead of the stuck one.
+            // See docs/operations.md and the executor's final report for the full finding.
             extraArgs: Client._argsToBytes(
                 Client.EVMExtraArgsV2({
                     gasLimit: outboundGasLimit,
@@ -927,6 +997,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             inTransitAssets += totalAmount;
             inTransitAmount[_message.messageId] = totalAmount;
             inTransitSince[_message.messageId] = block.timestamp;
+            inTransitToSpoke[_chainSelector] += 1;
             IERC20(asset()).forceApprove(address(router), totalAmount);
         }
         LINK.forceApprove(address(router), fee);
@@ -1072,6 +1143,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
         inTransitAssets -= inTransitAmount[_message.messageId];
         delete inTransitAmount[_message.messageId];
+        delete inTransitSince[_message.messageId];
+        if (inTransitToSpoke[_chainSelector] > 0) {
+            inTransitToSpoke[_chainSelector] -= 1;
+        }
         emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
     }
 

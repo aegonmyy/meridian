@@ -64,3 +64,9 @@ error NothingToReconcile();
 
 /// @notice Thrown when reconcileTransit is called before TRANSIT_RECONCILE_DELAY has elapsed
 error ReconcileTooEarly();
+
+/// @notice Thrown when removeSpoke is called on a spoke that still has a nonzero reported balance
+error SpokeNotDrained();
+
+/// @notice Thrown when removeSpoke is called on a spoke with in-flight DEPOSIT legs
+error SpokeHasInFlightLegs();

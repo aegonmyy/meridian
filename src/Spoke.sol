@@ -580,6 +580,13 @@ contract SpokeVault is CCIPReceiver, Ownable {
                 ),
                 tokenAmounts: tokenAmount,
                 feeToken: address(LINK),
+                // WI-0/WI-6: left false (ordered) — see the matching NatSpec in
+                // HUB._sendToSpoke for the full finding. The premise that motivated
+                // flipping this ("a reverting message blocks subsequent same-sender
+                // messages") does not hold against the pinned OffRamp/NonceManager: the
+                // inbound nonce advances on the first execution attempt regardless of
+                // success or failure, so a reverting message does not block the next one
+                // once attempted.
                 extraArgs: Client._argsToBytes(
                     Client.EVMExtraArgsV2({
                         gasLimit: 200_000,

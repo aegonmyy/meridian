@@ -26,11 +26,11 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
         _sendToSpoke(5_000e6); // synchronous simulator settles this immediately though —
         // inTransitAssets is already back to 0 here (CONFIRM_RECEIPT landed same-block).
         // To exercise reconcileTransit we need a genuinely stuck leg — simulate one by
-        // manipulating inTransitAmount/inTransitSince directly via storage, representing a
+        // manipulating inTransitAmount/transitLegs directly via storage, representing a
         // DEPOSIT whose CONFIRM_RECEIPT will provably never arrive (dead lane).
         bytes32 fakeMessageId = keccak256("stuck-leg");
         _setInTransitAmount(fakeMessageId, 1_000e6);
-        _setInTransitSince(fakeMessageId, block.timestamp);
+        _setTransitLeg(fakeMessageId, chainSelector, block.timestamp);
         _bumpInTransitAssets(1_000e6);
 
         vm.prank(owner);
@@ -44,7 +44,7 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
         bytes32 fakeMessageId = keccak256("stuck-leg-2");
         uint256 stuckAmount = 2_500e6;
         _setInTransitAmount(fakeMessageId, stuckAmount);
-        _setInTransitSince(fakeMessageId, block.timestamp);
+        _setTransitLeg(fakeMessageId, chainSelector, block.timestamp);
         _bumpInTransitAssets(stuckAmount);
 
         uint256 before = hub.inTransitAssets();
@@ -72,7 +72,7 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
         bytes32 fakeMessageId = keccak256("stuck-leg-3");
         uint256 stuckAmount = 1_000e6;
         _setInTransitAmount(fakeMessageId, stuckAmount);
-        _setInTransitSince(fakeMessageId, block.timestamp);
+        _setTransitLeg(fakeMessageId, chainSelector, block.timestamp);
         _bumpInTransitAssets(stuckAmount);
 
         vm.warp(block.timestamp + hub.TRANSIT_RECONCILE_DELAY() + 1);
@@ -87,16 +87,27 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
     }
 
     // ── storage helpers ──────────────────────────────────────────────────────
-    // Slots verified via `forge inspect src/Hub.sol:HUB storage-layout`:
-    // inTransitAssets = 15, inTransitAmount = 16, inTransitSince = 17
+    // AUTHORITATIVE SOURCE: re-run `forge inspect src/Hub.sol:HUB storage-layout` whenever
+    // Hub.sol's state variable declarations change — every slot constant below (and in any
+    // other test file using vm.store against HUB) must be re-verified against that output.
+    // Current: inTransitAssets = 15, inTransitAmount = 16, transitLegs = 17
+    // (transitLegs is struct{uint64 selector; uint64 sentAt} packed into one slot —
+    // selector at byte offset 0, sentAt at byte offset 8; see FX-2).
     function _setInTransitAmount(bytes32 id, uint256 amount) internal {
         bytes32 slot = keccak256(abi.encode(id, uint256(16)));
         vm.store(address(hub), slot, bytes32(amount));
     }
 
-    function _setInTransitSince(bytes32 id, uint256 timestamp_) internal {
+    function _setTransitLeg(
+        bytes32 id,
+        uint64 selector,
+        uint256 sentAt
+    ) internal {
         bytes32 slot = keccak256(abi.encode(id, uint256(17)));
-        vm.store(address(hub), slot, bytes32(timestamp_));
+        bytes32 packed = bytes32(
+            uint256(selector) | (uint256(uint64(sentAt)) << 64)
+        );
+        vm.store(address(hub), slot, packed);
     }
 
     function _bumpInTransitAssets(uint256 amount) internal {

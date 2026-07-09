@@ -112,6 +112,8 @@ abstract contract BaseHubTest is Test {
         hub._requestAllBalanceReports(messageId);
     }
 
+    // Slot constants below verified via `forge inspect src/Hub.sol:HUB storage-layout` —
+    // re-run and update whenever Hub.sol's state variable declarations change.
     function _setSpokeBalance(uint64 selector, uint256 amount) internal {
         bytes32 slot = keccak256(abi.encode(uint256(selector), uint256(11)));
         vm.store(address(hub), slot, bytes32(amount));

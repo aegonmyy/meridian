@@ -65,6 +65,18 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
         address owner;
     }
 
+    /// @notice Tracks a single outstanding DEPOSIT leg's origin selector and send time
+    /// @dev FX-2. Replaces the old parallel `inTransitSince` mapping — reconcileTransit needs
+    ///      to know which selector's inTransitToSpoke counter to decrement, and an owner-
+    ///      supplied selector parameter would be unverifiable (the stored value is the only
+    ///      trustworthy source). Both fields fit one slot.
+    struct TransitLeg {
+        /// @dev Chain selector the DEPOSIT was sent to
+        uint64 selector;
+        /// @dev block.timestamp the DEPOSIT was sent — gates TRANSIT_RECONCILE_DELAY
+        uint64 sentAt;
+    }
+
     /// @notice Stores spoke vault address and registration status for a chain
     /// @dev `exists` is the source of truth for active status — false means disabled.
     ///      `everRegistered` is write-once — prevents duplicate entries in spokeChainSelectors
@@ -159,10 +171,12 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
     ///      Deleted after the callback is processed.
     mapping(bytes32 => uint256) public inTransitAmount;
 
-    /// @notice Maps CCIP messageId to the timestamp its DEPOSIT was sent
-    /// @dev WI-5 — set in _sendToSpoke alongside inTransitAmount, gates reconcileTransit's
-    ///      TRANSIT_RECONCILE_DELAY. Deleted alongside inTransitAmount on reconciliation.
-    mapping(bytes32 => uint256) public inTransitSince;
+    /// @notice Maps CCIP messageId to the origin selector and send time of that DEPOSIT leg
+    /// @dev WI-5/FX-2 — set in _sendToSpoke alongside inTransitAmount. Deleted alongside
+    ///      inTransitAmount on both the normal path (_handleDepositCallback) and
+    ///      reconciliation (reconcileTransit) — the latter also uses the stored selector to
+    ///      decrement inTransitToSpoke, which the old inTransitSince-only design could not do.
+    mapping(bytes32 => TransitLeg) public transitLegs;
 
     /// @notice Minimum age of a stuck in-transit leg before the owner may reconcile it
     /// @dev WI-5 — replaces the removed adjustInTransitAssets. Operational order: attempt
@@ -482,16 +496,28 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
     ///      is harmless — inTransitAmount[id] is already deleted, so
     ///      `inTransitAssets -= inTransitAmount[id]` in _handleDepositCallback subtracts
     ///      zero and only updates the spoke balance (see WI5 regression tests).
+    ///      FX-2: also decrements inTransitToSpoke[selector] for the leg's origin selector
+    ///      (read from the stored TransitLeg, never an owner-supplied parameter — the stored
+    ///      value is the only trustworthy source). Without this, a reconciled leg — by
+    ///      definition one whose confirm will never arrive — left inTransitToSpoke
+    ///      permanently nonzero, making the safe removeSpoke path revert
+    ///      SpokeHasInFlightLegs forever for that selector even after the spoke was fully
+    ///      drained, forcing forceRemoveSpoke as the routine tool for exactly the dead-lane
+    ///      scenario this function exists to clean up.
     /// @param messageId The stuck DEPOSIT leg's internal message id
     function reconcileTransit(bytes32 messageId) external onlyOwner {
         uint256 amt = inTransitAmount[messageId];
         if (amt == 0) revert NothingToReconcile();
-        if (block.timestamp < inTransitSince[messageId] + TRANSIT_RECONCILE_DELAY) {
+        TransitLeg memory leg = transitLegs[messageId];
+        if (block.timestamp < leg.sentAt + TRANSIT_RECONCILE_DELAY) {
             revert ReconcileTooEarly();
         }
         inTransitAssets -= amt;
         delete inTransitAmount[messageId];
-        delete inTransitSince[messageId];
+        delete transitLegs[messageId];
+        if (inTransitToSpoke[leg.selector] > 0) {
+            inTransitToSpoke[leg.selector] -= 1;
+        }
         emit TransitReconciled(messageId, amt);
     }
 
@@ -1105,7 +1131,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
         if (totalAmount > 0) {
             inTransitAssets += totalAmount;
             inTransitAmount[_message.messageId] = totalAmount;
-            inTransitSince[_message.messageId] = block.timestamp;
+            transitLegs[_message.messageId] = TransitLeg({
+                selector: _chainSelector,
+                sentAt: uint64(block.timestamp)
+            });
             inTransitToSpoke[_chainSelector] += 1;
             netSentToSpoke[_chainSelector] += totalAmount;
             IERC20(asset()).forceApprove(address(router), totalAmount);
@@ -1324,7 +1353,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
         inTransitAssets -= inTransitAmount[_message.messageId];
         delete inTransitAmount[_message.messageId];
-        delete inTransitSince[_message.messageId];
+        delete transitLegs[_message.messageId];
         if (inTransitToSpoke[_chainSelector] > 0) {
             inTransitToSpoke[_chainSelector] -= 1;
         }

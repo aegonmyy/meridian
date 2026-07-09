@@ -1,0 +1,200 @@
+commit c07f155654353226b8a0627b52b7ff0b7aabbd55
+Author: Ubuntu <ubuntu@ip-172-31-23-203.ec2.internal>
+Date:   Thu Jul 9 15:26:07 2026 +0000
+
+    FX-7: write pendingLegs before dispatching legs, not after (SHOULD)
+    
+    pendingLegs was written into the pending entry AFTER the leg-dispatch loop
+    completed. In the synchronous CCIPLocalSimulator, a leg's confirm can arrive
+    (and attempt settlement) WHILE the dispatch loop is still running for later
+    legs — real CCIP always resolves dispatch and confirm-arrival in separate
+    transactions, so this can't happen in production, but the sync test harness
+    exposes it. If pendingLegs is still 0 (zero-initialized, not yet written)
+    at the moment a leg arrives mid-loop, _handleWithdrawalCallback's
+     guard is false and the decrement
+    for that already-arrived leg is silently skipped. The trailing write then
+    stomps pendingLegs back to the full original legCount, permanently
+    overcounting outstanding legs by one per mid-loop arrival — which can never
+    reach 0 again once the truly-last leg lands, permanently blocking FX-1's
+    Path 3 settlement gate.
+    
+    Regression test confirms: with two legs planned (one real spoke, one mock
+    that never resolves) and enough headroom that leg1's arrival alone doesn't
+    trigger settlement, pendingLegs reads 2 (the full original count) instead
+    of the correct 1 (only the still-outstanding leg2) after leg1 has already
+    been credited — pre-fix.
+    
+    Fix: legCount is now computed during the existing dry-run pass (no new
+    loop — same iteration, same haircut math, just also counting) and written
+    into the PendingWithdrawal struct at creation time, before any leg is
+    dispatched.
+    
+    Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+diff --git a/src/Hub.sol b/src/Hub.sol
+index 772905e..1f69ca3 100644
+--- a/src/Hub.sol
++++ b/src/Hub.sol
+@@ -871,30 +871,42 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
+         uint256 shortfall = assets - idleFree;
+         uint64[] memory order = _spokesByDescendingBalance();
+         uint256 remaining = shortfall;
++        uint32 legCount;
+         for (uint256 i = 0; i < order.length && remaining > 0; i++) {
+             uint256 cap = (spokeBalances[order[i]] * (10_000 - RECALL_HAIRCUT_BPS)) / 10_000;
+             uint256 leg = remaining < cap ? remaining : cap;
++            if (leg > 0) legCount++;
+             remaining -= leg;
+         }
+         if (remaining > 0) {
+             revert InsufficientRecallLiquidity(shortfall, shortfall - remaining);
+         }
+ 
+-        // Fully coverable — commit and dispatch.
++        // Fully coverable — commit BEFORE dispatch, including the final leg count.
++        // FX-7: pendingLegs is written HERE, before any leg is dispatched — not after the
++        // loop. A leg's confirm can arrive synchronously WHILE this loop is still running
++        // for later legs (this test harness; production CCIP always resolves dispatch and
++        // confirm-arrival in separate transactions, so this can't happen there). If
++        // pendingLegs were still 0 at that moment, the arriving leg's decrement guard
++        // (`if (pendingLegs > 0) pendingLegs -= 1`) would silently no-op, and the later
++        // post-loop write would stomp pendingLegs back to the full original legCount —
++        // permanently overcounting outstanding legs by one per mid-loop arrival, which can
++        // never fully reach 0 again once the truly-last leg lands, permanently blocking
++        // FX-1's Path 3 settlement gate. Writing here first makes this harness's behavior
++        // faithful to production ordering.
+         reservedAssets += idleFree;
+         pendingWithdrawals[_messageId] = PendingWithdrawal({
+             shares: shares,
+             quotedAssets: assets,
+             reservedIdle: idleFree,
+             arrivedAssets: 0,
+-            pendingLegs: 0,
++            pendingLegs: legCount,
+             requestedAt: uint64(block.timestamp),
+             receiver: receiver,
+             owner: owner
+         });
+ 
+         remaining = shortfall;
+-        uint32 legCount;
+         for (uint256 i = 0; i < order.length && remaining > 0; i++) {
+             uint64 selector = order[i];
+             uint256 cap = (spokeBalances[selector] * (10_000 - RECALL_HAIRCUT_BPS)) / 10_000;
+@@ -902,7 +914,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
+             if (leg == 0) continue;
+             bytes32 legId = _newMessageId(bytes32(uint256(selector)));
+             legToWithdrawal[legId] = _messageId;
+-            legCount++;
+             remaining -= leg;
+             CCIPHelpers.AdapterInstructions[]
+                 memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
+@@ -914,7 +925,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
+             });
+             this.recallFromSpoke(selector, _instructions, legId);
+         }
+-        pendingWithdrawals[_messageId].pendingLegs = legCount;
+         emit WithdrawalQueued(owner, _messageId, shares, assets, idleFree);
+     }
+ 
+diff --git a/test/regression/FX7_PendingLegsOrderingTest.t.sol b/test/regression/FX7_PendingLegsOrderingTest.t.sol
+new file mode 100644
+index 0000000..3cb5a5f
+--- /dev/null
++++ b/test/regression/FX7_PendingLegsOrderingTest.t.sol
+@@ -0,0 +1,95 @@
++// SPDX-License-Identifier: MIT
++pragma solidity 0.8.33;
++
++import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
++import {Vm} from "forge-std/Vm.sol";
++
++/// @notice FX-7 regression — pendingLegs must be written into the pending entry BEFORE the
++///         leg-dispatch loop runs, not after.
++/// @dev The concrete manifestation: with the write AFTER the loop, a leg that arrives
++///      synchronously WHILE the dispatch loop is still running for later legs finds
++///      `pendingLegs` still at its zero-initialized value (the real value, legCount, isn't
++///      written until the whole loop finishes) — so `_handleWithdrawalCallback`'s
++///      `if (pendingLegs > 0) pendingLegs -= 1` guard is false and the decrement for that
++///      ALREADY-ARRIVED leg is silently skipped. Once the loop finally finishes and writes
++///      `pendingLegs = legCount` (the full original count, ignorant of the leg that already
++///      landed), the entry permanently OVERCOUNTS its outstanding legs by one per
++///      mid-loop arrival — which can never fully reach 0 again once the truly-last leg
++///      arrives, permanently blocking FX-1's Path 3 settlement gate. This only manifests in
++///      a synchronous harness (production CCIP always resolves dispatch and confirm-arrival
++///      in separate transactions, so the post-loop write always completes first) — but
++///      writing pendingLegs before dispatch makes the harness behavior match production
++///      ordering, which is the point of this fix.
++contract FX7_PendingLegsOrderingTest is BaseHubTest {
++    function test_fx7_pendingLegsSetBeforeDispatch_midLoopArrivalDecrementsCorrectly() public {
++        // second spoke — mock EOA, never resolves its own leg synchronously (this harness's
++        // established limitation for genuinely-distinct multi-spoke delivery — see
++        // WI3_TwoPhaseRebalanceTest), but its reported balance still counts during Path 3's
++        // planning pass, and its leg still gets accounted for in legCount.
++        uint64 selector2 = 9999;
++        address mockSpoke2 = makeAddr("mockSpoke2");
++        vm.prank(owner);
++        hub.addSpoke(selector2, mockSpoke2);
++
++        // real spoke funded with the HIGHER balance so it's processed FIRST in
++        // _spokesByDescendingBalance's order — its confirm lands synchronously during the
++        // very first iteration of the dispatch loop, before the second leg is even sent —
++        // i.e. genuinely "mid-loop" relative to the trailing pendingLegs write.
++        _sendToSpoke(4_000e6);
++        _setSpokeBalance(selector2, 3_000e6);
++        _setLastReportTimestamp(chainSelector, block.timestamp);
++        _setLastReportTimestamp(selector2, block.timestamp);
++
++        // enough idle headroom that the FIRST leg's arrival alone does NOT already satisfy
++        // solvency (keeps the entry genuinely pending, not settled, so pendingLegs is the
++        // only thing meaningfully in question) but the shortfall still needs both legs by
++        // haircut math: shortfall 5_500e6 > either single spoke's capacity (3_980e6 /
++        // 2_985e6) alone.
++        deal(address(usdc), address(hub), 500e6);
++
++        vm.recordLogs();
++        vm.prank(alice);
++        hub.withdraw(6_000e6, alice, alice); // Path 3, two legs planned; leg1 arrives mid-loop
++
++        bytes32 id = _lastWithdrawalId();
++        assertTrue(id != bytes32(0), "withdrawal id must have been captured");
++
++        (
++            uint256 entryShares,
++            ,
++            ,
++            uint256 entryArrivedAssets,
++            uint32 entryPendingLegs,
++            ,
++            ,
++
++        ) = hub.pendingWithdrawals(id);
++
++        // The entry must still be genuinely pending (leg1 alone isn't enough to settle).
++        assertGt(entryShares, 0, "entry still pending, leg1 alone is not enough to settle");
++        assertGt(entryArrivedAssets, 0, "leg1's arrival was credited");
++
++        // The real assertion: leg1 has already arrived, so exactly ONE leg (leg2, to the
++        // mock spoke) remains outstanding — pendingLegs must read 1, not 2. Pre-fix, the
++        // post-loop write stomps this back to the full original legCount (2), silently
++        // discarding leg1's already-processed arrival and permanently overcounting.
++        assertEq(
++            entryPendingLegs,
++            1,
++            "pendingLegs must reflect leg1's already-processed arrival (1 remaining), not the original legCount"
++        );
++    }
++
++    function _lastWithdrawalId() internal returns (bytes32) {
++        bytes32 sig = keccak256(
++            "WithdrawalQueued(address,bytes32,uint256,uint256,uint256)"
++        );
++        Vm.Log[] memory logs = vm.getRecordedLogs();
++        for (uint256 i = logs.length; i > 0; i--) {
++            if (logs[i - 1].topics[0] == sig) {
++                return logs[i - 1].topics[2];
++            }
++        }
++        return bytes32(0);
++    }
++}

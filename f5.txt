@@ -1,0 +1,161 @@
+commit e704d0dcb335b20b1a29863166b70e5547a1a624
+Author: Ubuntu <ubuntu@ip-172-31-23-203.ec2.internal>
+Date:   Thu Jul 9 11:02:57 2026 +0000
+
+    FX-5: forceRemoveSpoke zeros dangling spokeBalances and inTransitToSpoke (SHOULD)
+    
+    forceRemoveSpoke flipped exists but left spokeBalances[selector] populated.
+    If that selector was later re-registered via addSpoke, the stale balance —
+    from a spoke that was possibly compromised or drained in the interim —
+    instantly re-entered totalAssets() at its old value the moment the
+    selector became active again. Similarly inTransitToSpoke[selector] dangled
+    forever (those legs' confirms can never land once force-removed — NotSpoke),
+    permanently blocking the safe removeSpoke path on any future re-add +
+    re-remove cycle for that selector.
+    
+    Regression test confirms both: pre-fix, totalAssets() jumps back up by the
+    stale balance on re-add alone, and inTransitToSpoke stays nonzero after
+    force-remove.
+    
+    Fix: forceRemoveSpoke now zeros both mappings after preserving their
+    dangling values in the existing SpokeForceRemoved event (unchanged —
+    operators still see exactly what was skipped). netSentToSpoke intentionally
+    left untouched — not mentioned in this fixup item, out of scope here.
+    Sequenced after FX-2 since it shares inTransitToSpoke's counter semantics.
+    
+    Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+diff --git a/src/Hub.sol b/src/Hub.sol
+index 4a361cd..772905e 100644
+--- a/src/Hub.sol
++++ b/src/Hub.sol
+@@ -597,11 +597,24 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
+         if (spokes[_chainSelector].exists == false) revert SpokeNotFound();
+         delete addressToSelector[spokes[_chainSelector].spoke];
+         spokes[_chainSelector].exists = false;
++        // FX-5: the dangling values are preserved in the event below for the operator, then
++        // zeroed. Without this, re-registering this selector via addSpoke (e.g. pointing it
++        // at a freshly redeployed, or confirmed-safe, spoke contract) would instantly
++        // resurrect the OLD, possibly-compromised-or-drained balance into totalAssets() —
++        // the new spoke has reported nothing yet and shouldn't inherit its predecessor's
++        // number. inTransitToSpoke is zeroed for the same reason: those legs' confirms can
++        // never land once the spoke is force-removed (NotSpoke), so the counter would
++        // otherwise dangle forever and permanently block the safe removeSpoke path on any
++        // future re-add + re-remove cycle for this selector. Any tracked inTransitAmount
++        // legs remain independently reachable as reconcileTransit candidates, per the
++        // existing NatSpec on this function.
+         emit SpokeForceRemoved(
+             _chainSelector,
+             spokeBalances[_chainSelector],
+             inTransitToSpoke[_chainSelector]
+         );
++        delete spokeBalances[_chainSelector];
++        delete inTransitToSpoke[_chainSelector];
+     }
+ 
+     /// @notice Returns whether an address is currently a valid active spoke
+diff --git a/test/regression/FX5_ForceRemoveReAddTest.t.sol b/test/regression/FX5_ForceRemoveReAddTest.t.sol
+new file mode 100644
+index 0000000..688192b
+--- /dev/null
++++ b/test/regression/FX5_ForceRemoveReAddTest.t.sol
+@@ -0,0 +1,99 @@
++// SPDX-License-Identifier: MIT
++pragma solidity 0.8.33;
++
++import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
++
++/// @notice FX-5 regression — forceRemoveSpoke must zero the dangling spokeBalances (and
++///         inTransitToSpoke) it leaves behind, or a later re-add via addSpoke instantly
++///         resurrects the stale balance into totalAssets().
++contract FX5_ForceRemoveReAddTest is BaseHubTest {
++    /// @notice Reproduces the defect: fund a spoke, forceRemove it (funded balance excluded
++    /// from totalAssets, as documented/intended), then re-add the SAME selector via
++    /// addSpoke — pre-fix, totalAssets() instantly jumps back up by the stale balance the
++    /// moment the selector becomes active again, even though the underlying capital may
++    /// have been compromised or drained in the interim.
++    function test_fx5_reAddAfterForceRemove_doesNotResurrectStaleBalance() public {
++        _sendToSpoke(3_000e6);
++        assertEq(hub.spokeBalances(chainSelector), 3_000e6);
++
++        uint256 totalBefore = hub.totalAssets();
++
++        vm.prank(owner);
++        hub.forceRemoveSpoke(chainSelector);
++
++        // documented, intended instant mispricing window while removed
++        assertEq(hub.totalAssets(), totalBefore - 3_000e6, "balance excluded while removed");
++
++        // re-register the same selector (e.g. after confirming the spoke is safe again, or
++        // pointing it at a freshly redeployed contract)
++        address newSpokeAddress = makeAddr("redeployedSpoke");
++        vm.prank(owner);
++        hub.addSpoke(chainSelector, newSpokeAddress);
++
++        // the stale 3_000e6 must NOT resurrect — the new spoke has reported nothing yet
++        assertEq(
++            hub.spokeBalances(chainSelector),
++            0,
++            "stale balance must not resurrect on re-add"
++        );
++        assertEq(
++            hub.totalAssets(),
++            totalBefore - 3_000e6,
++            "totalAssets must not jump back up on re-add alone"
++        );
++    }
++
++    /// @notice inTransitToSpoke is also zeroed — those legs' confirms can never land once
++    /// the spoke is force-removed (NotSpoke), so the counter would otherwise dangle forever
++    /// and permanently block the safe removeSpoke path on any future re-add + re-remove.
++    function test_fx5_forceRemoveSpoke_zerosInTransitToSpoke() public {
++        // simulate an in-flight leg the same way FX-2's test does
++        _sendToSpoke(1_000e6);
++        bytes32 stuckLegId = keccak256("stuck-leg-fx5");
++        _bumpInTransitToSpoke(chainSelector, 1);
++        assertGt(hub.inTransitToSpoke(chainSelector), 0);
++        stuckLegId; // unused beyond documenting intent
++
++        vm.prank(owner);
++        hub.forceRemoveSpoke(chainSelector);
++
++        assertEq(hub.inTransitToSpoke(chainSelector), 0, "in-flight leg counter zeroed");
++    }
++
++    /// @notice After force-remove + re-add, the safe removeSpoke path works once the
++    /// re-added spoke is itself genuinely drained (proves the counters are clean, not just
++    /// zeroed once and silently broken for future guard checks).
++    function test_fx5_removeSpoke_worksOnReAddedSpoke_onceDrained() public {
++        _sendToSpoke(2_000e6);
++
++        vm.prank(owner);
++        hub.forceRemoveSpoke(chainSelector);
++
++        vm.prank(owner);
++        hub.addSpoke(chainSelector, address(spoke)); // re-point back to the same real spoke
++
++        // spoke's real adapter still holds 2_000e6, but hub's spokeBalances was zeroed —
++        // report balance to resync hub's view with reality before it can be safely removed
++        vm.warp(block.timestamp + 1 hours);
++        _triggerReportBalance();
++        assertEq(hub.spokeBalances(chainSelector), 2_000e6, "resynced via report");
++
++        // drain for real, then the safe path must work
++        bytes32 recallId = _generateMessageId(address(hub));
++        _recallFromSpoke(2_000e6, recallId);
++        assertEq(hub.spokeBalances(chainSelector), 0);
++
++        vm.prank(owner);
++        hub.removeSpoke(chainSelector);
++
++        (, bool exists, ) = hub.spokes(chainSelector);
++        assertFalse(exists);
++    }
++
++    // inTransitToSpoke = slot 18 (verified via `forge inspect src/Hub.sol:HUB storage-layout`)
++    function _bumpInTransitToSpoke(uint64 selector, uint256 amount) internal {
++        bytes32 slot = keccak256(abi.encode(uint256(selector), uint256(18)));
++        uint256 current = hub.inTransitToSpoke(selector);
++        vm.store(address(hub), slot, bytes32(current + amount));
++    }
++}

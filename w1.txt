@@ -1,0 +1,452 @@
+commit 032c003b720efb27be52572876700bdd04e05fb4
+Author: Ubuntu <ubuntu@ip-172-31-23-203.ec2.internal>
+Date:   Wed Jul 8 22:56:47 2026 +0000
+
+    WI-1: nonce'd message identity for hub-issued CCIP message ids
+    
+    Replace content-derived message ids with a monotonic-nonce derivation
+    (_newMessageId) so same-block operations never collide. Removes the
+    _messageId parameter from HUB.rebalance and IHub; Rebalancer.rebalance
+    drops its own keccak derivation. Adds a regression suite asserting id
+    uniqueness for deposits and same-receiver withdrawals.
+    
+    Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+diff --git a/src/Hub.sol b/src/Hub.sol
+index c0bc84f..5d00bef 100644
+--- a/src/Hub.sol
++++ b/src/Hub.sol
+@@ -109,8 +109,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
+     mapping(uint64 => uint256) public lastReportTimestamp;
+ 
+     /// @notice Pending withdrawals keyed by messageId awaiting async settlement
+-    /// @dev messageId is keccak256(receiver, timestamp) — unique per withdrawal per block.
+-    ///      Same-block collision is a known v1 limitation; nonce will be added in v2.
++    /// @dev messageId is derived from a monotonic nonce via _newMessageId — unique
++    ///      across the hub's lifetime, so same-block withdrawals never collide.
+     mapping(bytes32 => PendingWithdrawal) public pendingWithdrawals;
+ 
+     /// @notice Maximum age of a spoke balance report before it is considered stale
+@@ -133,6 +133,14 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
+     ///      Increase via setOutboundGasLimit() if messages fail at destination.
+     uint32 public outboundGasLimit = 1_500_000;
+ 
++    /// @notice Monotonic counter used to derive collision-free internal message ids
++    /// @dev Incremented for every id produced by _newMessageId. Because it is part of
++    ///      the preimage, two operations in the same block (same amount / receiver /
++    ///      target) can never share an id — this is the fix for the content-derived
++    ///      id collisions that previously corrupted inTransitAmount bookkeeping and
++    ///      overwrote pending withdrawals.
++    uint256 private _messageNonce;
++
+     // =========================================================================
+     // Events
+     // =========================================================================
+@@ -356,8 +364,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
+         CCIPHelpers.AdapterInstructions[] memory _instructions
+     ) external onlyRebalancer {
+         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
+-        uint256 _amount = _instructions[0].amount;
+-        bytes32 _messageId = keccak256(abi.encode(_amount, block.timestamp));
++        bytes32 _messageId = _newMessageId(bytes32(uint256(_chainSelector)));
+         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
+             messageType: CCIPHelpers.MessageType.DEPOSIT,
+             instructions: _instructions,
+@@ -399,17 +406,18 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
+     ///      no tokens attached. Spoke withdraws from source adapter and deposits into target
+     ///      adapter on the same chain. No capital leaves the spoke chain.
+     ///      Spoke responds with CONFIRM_REBALANCE carrying updated spoke balance.
++    ///      The message id is derived internally via the nonce'd _newMessageId helper —
++    ///      callers no longer supply one (removed in WI-1 to eliminate id collisions).
+     /// @param _chainSelector CCIP chain selector of the target spoke
+     /// @param _instructions Array specifying source adapter, target adapter, and amount to move
+-    /// @param _messageId Unique identifier for this rebalance operation
+     function rebalance(
+         uint64 _chainSelector,
+-        CCIPHelpers.AdapterInstructions[] memory _instructions,
+-        bytes32 _messageId
++        CCIPHelpers.AdapterInstructions[] memory _instructions
+     ) external onlyRebalancer {
+         if (!spokes[_chainSelector].exists) {
+             revert SpokeNotFound();
+         }
++        bytes32 _messageId = _newMessageId(bytes32(uint256(_chainSelector)));
+         CCIPHelpers.CcipMessage memory _message = CCIPHelpers.CcipMessage({
+             messageType: CCIPHelpers.MessageType.REBALANCE,
+             instructions: _instructions,
+@@ -443,8 +451,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
+     /// @notice Overrides ERC4626._withdraw to implement three-path async withdrawal
+     /// @dev Shares are transferred to hub at start and only burned on final settlement.
+     ///      No super() call — full flow is owned here.
+-    ///      messageId = keccak256(receiver, timestamp) — same-block collision is a known
+-    ///      v1 limitation; a nonce will be added in v2.
++    ///      messageId is derived from a monotonic nonce via _newMessageId — collision-free.
+     ///      Path 1 (sync): idle >= assets AND all spokes fresh → immediate settlement.
+     ///      Path 2 (async): idle >= assets AND any spoke stale → queue + REPORT_BALANCE.
+     ///      Path 3 (async): idle < assets → reserve idle, recall shortfall from best spoke.
+@@ -467,7 +474,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
+         assets = previewRedeem(shares);
+         if (assets == 0) revert ZeroWithdrawal();
+         uint256 idle = _idleBalance() - reservedAssets;
+-        bytes32 _messageId = _messageIdForWithdrawal(receiver);
++        bytes32 _messageId = _newMessageId(bytes32(uint256(uint160(receiver))));
+         if (idle >= assets) {
+             reservedAssets += assets;
+             if (_allSpokesFresh()) {
+@@ -645,10 +652,18 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
+         emit SentToSpoke(_chainSelector, ccipMessageId, _message.messageId, totalAmount);
+     }
+ 
+-    function _messageIdForWithdrawal(
+-        address receiver
+-    ) internal view returns (bytes32) {
+-        return keccak256(abi.encode(receiver, block.timestamp));
++    /// @notice Derives a collision-free internal message id from a monotonic nonce
++    /// @dev Every id is unique across the hub's lifetime — the incrementing nonce
++    ///      guarantees no two operations (deposits, withdrawals, rebalances, recalls)
++    ///      ever share an id, even within a single block. The additional context,
++    ///      chainid, and address inputs harden the id against cross-contract reuse.
++    /// @param context Caller-supplied disambiguator (e.g. selector or receiver)
++    /// @return A unique bytes32 message id
++    function _newMessageId(bytes32 context) internal returns (bytes32) {
++        return
++            keccak256(
++                abi.encode(++_messageNonce, context, block.chainid, address(this))
++            );
+     }
+ 
+     /// @notice Returns total protocol assets per ERC4626 standard
+diff --git a/src/Rebalancer.sol b/src/Rebalancer.sol
+index 58d67a1..4937329 100644
+--- a/src/Rebalancer.sol
++++ b/src/Rebalancer.sol
+@@ -176,8 +176,9 @@ contract Rebalancer {
+             targetAdapter: _target,
+             targetAmount: 0
+         });
+-        bytes32 _messageId = keccak256(abi.encode(_target, block.timestamp));
+-        HUB.rebalance(_chainSelector, _instructions, _messageId);
++        // Message id is derived inside the hub via its nonce'd _newMessageId helper
++        // (WI-1) — the rebalancer no longer derives collision-prone content ids.
++        HUB.rebalance(_chainSelector, _instructions);
+     }
+ 
+     /// @notice Validates and executes a full cross-chain allocation proposal from the agent
+diff --git a/src/interfaces/IHub.sol b/src/interfaces/IHub.sol
+index 157247b..bae48d1 100644
+--- a/src/interfaces/IHub.sol
++++ b/src/interfaces/IHub.sol
+@@ -21,7 +21,6 @@ interface IHub {
+ 
+     function rebalance(
+         uint64 _chainSelector,
+-        CCIPHelpers.AdapterInstructions[] memory _instructions,
+-        bytes32 _messageId
++        CCIPHelpers.AdapterInstructions[] memory _instructions
+     ) external;
+ }
+diff --git a/test/integration/FullFlowTest.t.sol b/test/integration/FullFlowTest.t.sol
+index ff9997e..b701cce 100644
+--- a/test/integration/FullFlowTest.t.sol
++++ b/test/integration/FullFlowTest.t.sol
+@@ -405,7 +405,6 @@ contract FullFlowTest is Test {
+ 
+         vm.warp(block.timestamp + 25 hours);
+ 
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         CCIPHelpers.AdapterInstructions[]
+             memory rebalanceInstructions = new CCIPHelpers.AdapterInstructions[](
+                 1
+@@ -418,7 +417,7 @@ contract FullFlowTest is Test {
+         });
+ 
+         vm.prank(address(rebalancer));
+-        hub.rebalance(ARBITRUM_SELECTOR, rebalanceInstructions, messageId);
++        hub.rebalance(ARBITRUM_SELECTOR, rebalanceInstructions);
+ 
+         // rebalance never touches inTransit, exact
+         assertEq(hub.inTransitAssets(), 0, "inTransit stays 0 for rebalance");
+diff --git a/test/regression/WI1_MessageIdCollisionTest.t.sol b/test/regression/WI1_MessageIdCollisionTest.t.sol
+new file mode 100644
+index 0000000..a1f3d4e
+--- /dev/null
++++ b/test/regression/WI1_MessageIdCollisionTest.t.sol
+@@ -0,0 +1,97 @@
++// SPDX-License-Identifier: MIT
++pragma solidity 0.8.33;
++
++import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
++import {Vm} from "forge-std/Vm.sol";
++
++/// @notice WI-1 regression — content-derived message ids collide.
++/// @dev The CCIPLocalSimulator routes messages synchronously (nested), so the
++///      async fund-stranding manifestation (two same-id messages in flight,
++///      corrupting inTransitAmount / overwriting a pending withdrawal) cannot be
++///      reproduced end-to-end in this harness — each round trip fully settles
++///      before the next call. We therefore assert the ROOT CAUSE directly: two
++///      logically distinct operations in the same block must produce distinct
++///      internal message ids. Pre-fix these ids are equal (keccak of
++///      amount+timestamp / receiver+timestamp); post-WI-1 they are nonce'd and
++///      always distinct.
++contract WI1_MessageIdCollisionTest is BaseHubTest {
++    // event signatures for log parsing
++    bytes32 constant SENT_TO_SPOKE_SIG =
++        keccak256("SentToSpoke(uint64,bytes32,bytes32,uint256)");
++    bytes32 constant WITHDRAWAL_PROCESSED_SIG =
++        keccak256("WithdrawalProcessed(address,address,uint256,bytes32)");
++
++    /// @notice Two deposits of identical amount in one block must not share a message id.
++    function test_wi1_sendToSpoke_sameAmountSameBlock_distinctIds() public {
++        vm.recordLogs();
++
++        _sendToSpoke(3_000e6);
++        _sendToSpoke(3_000e6);
++
++        Vm.Log[] memory logs = vm.getRecordedLogs();
++        bytes32 firstId;
++        bytes32 secondId;
++        uint256 seen;
++        for (uint256 i = 0; i < logs.length; i++) {
++            if (logs[i].topics[0] == SENT_TO_SPOKE_SIG) {
++                (bytes32 internalId, ) = abi.decode(
++                    logs[i].data,
++                    (bytes32, uint256)
++                );
++                if (seen == 0) {
++                    firstId = internalId;
++                } else if (seen == 1) {
++                    secondId = internalId;
++                }
++                seen++;
++            }
++        }
++        assertGe(seen, 2, "expected two SentToSpoke events");
++        assertTrue(
++            firstId != secondId,
++            "message id collision: identical ids for two distinct deposits"
++        );
++    }
++
++    /// @notice Two same-receiver withdrawals in one block must not share a message id.
++    function test_wi1_withdrawal_sameReceiverSameBlock_distinctIds() public {
++        // deploy some capital so a report cycle exists, then make it stale so
++        // idle-covered withdrawals take Path 2 (queued, then settled on report).
++        _sendToSpoke(4_000e6);
++        vm.warp(block.timestamp + 2 hours); // exceed MAX_STALENESS
++
++        uint256 aliceShares = hub.balanceOf(alice);
++        uint256 quarterShares = aliceShares / 4;
++
++        vm.recordLogs();
++
++        vm.prank(alice);
++        hub.redeem(quarterShares, alice, alice);
++        vm.prank(alice);
++        hub.redeem(quarterShares, alice, alice);
++
++        Vm.Log[] memory logs = vm.getRecordedLogs();
++        bytes32 firstId;
++        bytes32 secondId;
++        uint256 seen;
++        for (uint256 i = 0; i < logs.length; i++) {
++            if (logs[i].topics[0] == WITHDRAWAL_PROCESSED_SIG) {
++                (, bytes32 messageId) = abi.decode(
++                    logs[i].data,
++                    (uint256, bytes32)
++                );
++                if (seen == 0) {
++                    firstId = messageId;
++                } else if (seen == 1) {
++                    secondId = messageId;
++                }
++                seen++;
++            }
++        }
++        assertGe(seen, 2, "expected two WithdrawalProcessed events");
++        assertTrue(
++            firstId != secondId,
++            "withdrawal id collision: identical ids overwrite the pending entry"
++        );
++    }
++}
+diff --git a/test/units/HandleRebalanceTest.t.sol b/test/units/HandleRebalanceTest.t.sol
+index ecd91cd..704ea6e 100644
+--- a/test/units/HandleRebalanceTest.t.sol
++++ b/test/units/HandleRebalanceTest.t.sol
+@@ -126,11 +126,8 @@ contract HandleRebalanceTest is Test {
+             targetAdapter: target,
+             targetAmount: 0
+         });
+-        bytes32 messageId = keccak256(
+-            abi.encode(source, target, block.timestamp)
+-        );
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+     }
+ 
+     // =========================================================================
+@@ -207,9 +204,8 @@ contract HandleRebalanceTest is Test {
+             targetAmount: 0
+         });
+ 
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+ 
+         assertEq(aaveAdapter.totalAssets(), 3_500e6);
+         assertEq(compoundAdapter.totalAssets(), 1_000e6);
+@@ -250,21 +246,19 @@ contract HandleRebalanceTest is Test {
+             targetAmount: 0
+         });
+ 
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+         // CCIP delivers but spoke reverts — hub catches ReceiverError
+         vm.expectRevert();
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+     }
+ 
+     function test_handleRebalance_revert_emptyInstructions() public {
+         CCIPHelpers.AdapterInstructions[]
+             memory instructions = new CCIPHelpers.AdapterInstructions[](0);
+ 
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+         vm.expectRevert();
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+     }
+ 
+     function test_handleRebalance_revert_zeroAmount() public {
+@@ -277,9 +271,8 @@ contract HandleRebalanceTest is Test {
+             targetAmount: 0
+         });
+ 
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+         vm.expectRevert();
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+     }
+ }
+diff --git a/test/units/hub/RebalanceTest.t.sol b/test/units/hub/RebalanceTest.t.sol
+index ace1e26..2e55f10 100644
+--- a/test/units/hub/RebalanceTest.t.sol
++++ b/test/units/hub/RebalanceTest.t.sol
+@@ -26,9 +26,8 @@ contract RebalanceTest is BaseHubTest {
+             targetAdapter: COMPOUND,
+             targetAmount: 0
+         });
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+ 
+         assertEq(aaveAdapter.totalAssets(), 3_000e6);
+     }
+@@ -46,9 +45,8 @@ contract RebalanceTest is BaseHubTest {
+             targetAdapter: COMPOUND,
+             targetAmount: 0
+         });
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+ 
+         assertEq(compoundAdapter.totalAssets(), 2_000e6);
+     }
+@@ -67,9 +65,8 @@ contract RebalanceTest is BaseHubTest {
+             targetAdapter: COMPOUND,
+             targetAmount: 0
+         });
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+ 
+         assertEq(hub.spokeBalances(chainSelector), spokeBalanceBefore);
+     }
+@@ -87,9 +84,8 @@ contract RebalanceTest is BaseHubTest {
+             targetAdapter: COMPOUND,
+             targetAmount: 0
+         });
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+ 
+         assertGt(hub.lastReportTimestamp(chainSelector), 0);
+         assertEq(hub.spokeBalances(chainSelector), 5_000e6);
+@@ -109,9 +105,8 @@ contract RebalanceTest is BaseHubTest {
+             targetAdapter: COMPOUND,
+             targetAmount: 0
+         });
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+ 
+         assertEq(hub.totalAssets(), totalBefore);
+     }
+@@ -130,9 +125,8 @@ contract RebalanceTest is BaseHubTest {
+             targetAdapter: COMPOUND,
+             targetAmount: 0
+         });
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+ 
+         assertEq(usdc.balanceOf(address(hub)), hubUSDCBefore);
+     }
+@@ -151,9 +145,8 @@ contract RebalanceTest is BaseHubTest {
+             targetAdapter: COMPOUND,
+             targetAmount: 0
+         });
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+ 
+         assertEq(hub.inTransitAssets(), 0);
+     }
+@@ -172,9 +165,8 @@ contract RebalanceTest is BaseHubTest {
+             targetAdapter: COMPOUND,
+             targetAmount: 0
+         });
+-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
+         vm.prank(rebalancer);
+-        hub.rebalance(chainSelector, instructions, messageId);
++        hub.rebalance(chainSelector, instructions);
+ 
+         assertEq(usdc.balanceOf(address(hub)), hubUSDCBefore);
+     }
+@@ -191,7 +183,7 @@ contract RebalanceTest is BaseHubTest {
+ 
+         vm.prank(alice);
+         vm.expectRevert(NotRebalancer.selector);
+-        hub.rebalance(chainSelector, instructions, bytes32(0));
++        hub.rebalance(chainSelector, instructions);
+     }
+ 
+     function test_rebalance_revert_spokeNotFound() public {
+@@ -206,7 +198,7 @@ contract RebalanceTest is BaseHubTest {
+ 
+         vm.prank(rebalancer);
+         vm.expectRevert(SpokeNotFound.selector);
+-        hub.rebalance(9999, instructions, bytes32(0));
++        hub.rebalance(9999, instructions);
+     }
+ 
+     function test_rebalance_revert_removedSpoke() public {
+@@ -224,6 +216,6 @@ contract RebalanceTest is BaseHubTest {
+ 
+         vm.prank(rebalancer);
+         vm.expectRevert(SpokeNotFound.selector);
+-        hub.rebalance(chainSelector, instructions, bytes32(0));
++        hub.rebalance(chainSelector, instructions);
+     }
+ }

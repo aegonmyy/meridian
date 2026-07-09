@@ -3,6 +3,7 @@ pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {CCIPLocalSimulator, IRouterClient, LinkToken} from "chainlink-local/ccip/CCIPLocalSimulator.sol";
+import {Client} from "@chainlink+/ccip/libraries/Client.sol";
 import {HUB} from "../../../src/Hub.sol";
 import {SpokeVault} from "../../../src/Spoke.sol";
 import {Asset} from "../../mocks/Asset.sol";
@@ -188,5 +189,76 @@ abstract contract BaseHubTest is Test {
         COMPOUND = keccak256("COMPOUND");
         vm.prank(owner);
         spoke.setAdapter(COMPOUND, address(compoundAdapter));
+    }
+
+    // =========================================================================
+    // Shared CCIP delivery helpers (FX-4)
+    // =========================================================================
+    // Bypass the router's auto-delivery and call HUB.ccipReceive directly (pranked as the
+    // router — exactly what CCIPReceiver's onlyRouter modifier permits) with hand-built
+    // Any2EVMMessage payloads. Used wherever a test needs precise control over delivery
+    // timing/order/content that CCIPLocalSimulator's synchronous auto-routing can't provide
+    // (e.g. WI6_OutOfOrderDeliveryTest's reordering test, WI5's late-confirm-after-reconcile
+    // test). Extracted here per FX-4 so it isn't duplicated per test file.
+
+    function _deliverConfirmWithdrawal(
+        bytes32 messageId,
+        uint256 reportedSpokeBalance,
+        uint256 tokenAmount
+    ) internal {
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](0);
+        CCIPHelpers.CcipMessage memory payload = CCIPHelpers.CcipMessage({
+            messageType: CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
+            instructions: instructions,
+            spokeBalance: reportedSpokeBalance,
+            reportTimestamp: block.timestamp,
+            messageId: messageId
+        });
+
+        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
+        tokenAmounts[0] = Client.EVMTokenAmount({
+            token: address(usdc),
+            amount: tokenAmount
+        });
+
+        Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
+            messageId: keccak256(abi.encode("ccip", messageId)),
+            sourceChainSelector: chainSelector,
+            sender: abi.encode(address(spoke)),
+            data: CCIPHelpers.encode(payload),
+            destTokenAmounts: tokenAmounts
+        });
+
+        vm.prank(address(router));
+        hub.ccipReceive(message);
+    }
+
+    function _deliverConfirmReceipt(
+        bytes32 messageId,
+        uint256 reportedSpokeBalance
+    ) internal {
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](0);
+        CCIPHelpers.CcipMessage memory payload = CCIPHelpers.CcipMessage({
+            messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
+            instructions: instructions,
+            spokeBalance: reportedSpokeBalance,
+            reportTimestamp: block.timestamp,
+            messageId: messageId
+        });
+
+        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](0);
+
+        Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
+            messageId: keccak256(abi.encode("ccip", messageId)),
+            sourceChainSelector: chainSelector,
+            sender: abi.encode(address(spoke)),
+            data: CCIPHelpers.encode(payload),
+            destTokenAmounts: tokenAmounts
+        });
+
+        vm.prank(address(router));
+        hub.ccipReceive(message);
     }
 }

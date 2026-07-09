@@ -2,8 +2,6 @@
 pragma solidity 0.8.33;
 
 import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
-import {Client} from "@chainlink+/ccip/libraries/Client.sol";
-import {CCIPHelpers} from "../../src/libraries/CCIPHelpers.sol";
 
 /// @title WI6_OutOfOrderDeliveryTest
 /// @notice WI-6 accept criterion: "write one integration test delivering a recall before
@@ -92,66 +90,8 @@ contract WI6_OutOfOrderDeliveryTest is BaseHubTest {
         vm.store(address(hub), slot, bytes32(amount));
     }
 
-    function _deliverConfirmWithdrawal(
-        bytes32 messageId,
-        uint256 reportedSpokeBalance,
-        uint256 tokenAmount
-    ) internal {
-        CCIPHelpers.AdapterInstructions[]
-            memory instructions = new CCIPHelpers.AdapterInstructions[](0);
-        CCIPHelpers.CcipMessage memory payload = CCIPHelpers.CcipMessage({
-            messageType: CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
-            instructions: instructions,
-            spokeBalance: reportedSpokeBalance,
-            reportTimestamp: block.timestamp,
-            messageId: messageId
-        });
-
-        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
-        tokenAmounts[0] = Client.EVMTokenAmount({
-            token: address(usdc),
-            amount: tokenAmount
-        });
-
-        Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
-            messageId: keccak256(abi.encode("ccip", messageId)),
-            sourceChainSelector: chainSelector,
-            sender: abi.encode(address(spoke)),
-            data: CCIPHelpers.encode(payload),
-            destTokenAmounts: tokenAmounts
-        });
-
-        vm.prank(address(router));
-        hub.ccipReceive(message);
-    }
-
-    function _deliverConfirmReceipt(
-        bytes32 messageId,
-        uint256 reportedSpokeBalance
-    ) internal {
-        CCIPHelpers.AdapterInstructions[]
-            memory instructions = new CCIPHelpers.AdapterInstructions[](0);
-        CCIPHelpers.CcipMessage memory payload = CCIPHelpers.CcipMessage({
-            messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
-            instructions: instructions,
-            spokeBalance: reportedSpokeBalance,
-            reportTimestamp: block.timestamp,
-            messageId: messageId
-        });
-
-        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](0);
-
-        Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
-            messageId: keccak256(abi.encode("ccip", messageId)),
-            sourceChainSelector: chainSelector,
-            sender: abi.encode(address(spoke)),
-            data: CCIPHelpers.encode(payload),
-            destTokenAmounts: tokenAmounts
-        });
-
-        vm.prank(address(router));
-        hub.ccipReceive(message);
-    }
+    // _deliverConfirmWithdrawal / _deliverConfirmReceipt live in BaseHubTest (FX-4 —
+    // extracted so this pattern isn't duplicated across test files).
 
     function _assertAccountingIdentity(string memory label) internal view {
         assertEq(

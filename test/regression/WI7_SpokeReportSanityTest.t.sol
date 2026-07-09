@@ -4,6 +4,7 @@ pragma solidity 0.8.33;
 import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
 import {HUB} from "../../src/Hub.sol";
 import {NoQuarantinedReport} from "../../src/errors/hubErrors.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 /// @notice WI-7 regressions — spoke-report sanity band + circuit breaker.
 contract WI7_SpokeReportSanityTest is BaseHubTest {
@@ -27,8 +28,10 @@ contract WI7_SpokeReportSanityTest is BaseHubTest {
         assertTrue(hub.paused(), "vault paused on suspicious report");
 
         // the exploit — redeeming at the inflated price — is unavailable while paused
+        // (FX-4 audit: tightened from a bare expectRevert — the point of this assertion is
+        // specifically that Pausable blocks it, not any incidental revert reason)
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(Pausable.EnforcedPause.selector);
         hub.redeem(1, alice, alice);
     }
 

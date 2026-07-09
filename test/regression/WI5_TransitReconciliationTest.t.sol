@@ -2,6 +2,7 @@
 pragma solidity 0.8.33;
 
 import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
+import {ReconcileTooEarly} from "../../src/errors/hubErrors.sol";
 
 /// @notice WI-5 regressions — removal of the unbounded adjustInTransitAssets owner setter,
 ///         replaced with evidence-bounded, per-message reconciliation.
@@ -34,7 +35,7 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
         _bumpInTransitAssets(1_000e6);
 
         vm.prank(owner);
-        vm.expectRevert();
+        vm.expectRevert(ReconcileTooEarly.selector);
         hub.reconcileTransit(fakeMessageId);
     }
 
@@ -58,32 +59,61 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
         assertEq(hub.inTransitAmount(fakeMessageId), 0);
     }
 
-    /// @notice A late CONFIRM_RECEIPT arriving after reconciliation is harmless — the
-    /// deposit callback's inTransitAssets -= inTransitAmount[id] subtracts zero (mapping
-    /// already deleted) and only updates the spoke balance.
-    function test_wi5_lateConfirmAfterReconcile_isHarmless() public {
-        // Use a REAL leg this time so we can deliver a genuine CONFIRM_RECEIPT after
-        // reconciling — but since this harness delivers synchronously, we simulate the
-        // "stuck then reconciled" state via storage first, matching the real sequence of
-        // events (send -> stuck -> reconcile -> late confirm arrives), then verify the
-        // callback's subtraction is a no-op by directly re-invoking the deposit flow's
-        // accounting guarantee: inTransitAmount[id] is already 0, so a hypothetical replay
-        // of `inTransitAssets -= inTransitAmount[id]` cannot underflow or double-decrement.
+    /// @notice A late CONFIRM_RECEIPT arriving after reconciliation is harmless AND
+    /// self-healing: delivery does not revert, inTransitAssets is unaffected by it (the
+    /// id's tracked amount was already released and the mapping deleted, so the callback's
+    /// `inTransitAssets -= inTransitAmount[id]` subtracts zero), and — the real property
+    /// under test — spokeBalances[selector] IS updated from the late message. A premature
+    /// reconcile therefore converges to the truth once the confirm eventually lands, rather
+    /// than leaving the hub's view of the spoke permanently wrong.
+    /// @dev FX-4a: rewrite of the previous, tautological version of this test (it never
+    /// delivered a confirm — it asserted a storage-cheat value equalled itself). Delivers a
+    /// genuine CONFIRM_RECEIPT via a direct pranked-router `hub.ccipReceive` call (the
+    /// shared BaseHubTest helper, same pattern as WI6_OutOfOrderDeliveryTest), since the
+    /// synchronous CCIPLocalSimulator can't otherwise produce a "confirm arrives after
+    /// reconcile" ordering through the normal send path.
+    function test_wi5_lateConfirmAfterReconcile_isHarmlessAndSelfHealing() public {
         bytes32 fakeMessageId = keccak256("stuck-leg-3");
         uint256 stuckAmount = 1_000e6;
         _setInTransitAmount(fakeMessageId, stuckAmount);
         _setTransitLeg(fakeMessageId, chainSelector, block.timestamp);
         _bumpInTransitAssets(stuckAmount);
+        // establish a netSentToSpoke baseline so the late confirm's reported balance
+        // doesn't independently trip WI-7's sanity band — orthogonal to what this test
+        // is about.
+        _bumpNetSentToSpoke(chainSelector, stuckAmount);
+
+        uint256 inTransitBefore = hub.inTransitAssets();
 
         vm.warp(block.timestamp + hub.TRANSIT_RECONCILE_DELAY() + 1);
         vm.prank(owner);
         hub.reconcileTransit(fakeMessageId);
 
         assertEq(hub.inTransitAmount(fakeMessageId), 0, "mapping entry deleted");
-        // inTransitAssets must not underflow if the same id were subtracted again
-        uint256 beforeSecondSubtraction = hub.inTransitAssets();
-        assertEq(hub.inTransitAmount(fakeMessageId) , 0);
-        assertEq(hub.inTransitAssets(), beforeSecondSubtraction);
+        assertEq(
+            hub.inTransitAssets(),
+            inTransitBefore - stuckAmount,
+            "reconcile released the tracked amount"
+        );
+
+        // The late confirm finally arrives — must not revert.
+        uint256 lateReportedBalance = 1_000e6;
+        _deliverConfirmReceipt(fakeMessageId, lateReportedBalance);
+
+        // Harmless: inTransitAssets is untouched by this specific id a second time
+        // (inTransitAmount[id] was already 0 — no double-decrement, no underflow).
+        assertEq(
+            hub.inTransitAssets(),
+            inTransitBefore - stuckAmount,
+            "late confirm must not double-decrement inTransitAssets"
+        );
+        // Self-healing: the hub's view of the spoke converges to the truth once the late
+        // confirm lands, instead of staying permanently wrong after the reconcile.
+        assertEq(
+            hub.spokeBalances(chainSelector),
+            lateReportedBalance,
+            "spokeBalances updated from the late-arriving confirm"
+        );
     }
 
     // ── storage helpers ──────────────────────────────────────────────────────
@@ -113,5 +143,12 @@ contract WI5_TransitReconciliationTest is BaseHubTest {
     function _bumpInTransitAssets(uint256 amount) internal {
         uint256 current = hub.inTransitAssets();
         vm.store(address(hub), bytes32(uint256(15)), bytes32(current + amount));
+    }
+
+    // netSentToSpoke = slot 19 (verified via `forge inspect src/Hub.sol:HUB storage-layout`)
+    function _bumpNetSentToSpoke(uint64 selector, uint256 amount) internal {
+        bytes32 slot = keccak256(abi.encode(uint256(selector), uint256(19)));
+        uint256 current = hub.netSentToSpoke(selector);
+        vm.store(address(hub), slot, bytes32(current + amount));
     }
 }

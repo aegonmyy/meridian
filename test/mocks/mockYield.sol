@@ -7,6 +7,10 @@ import {Asset} from "./Asset.sol";
 contract MockYieldSource is IYieldSource {
     Asset public asset;
     uint256 private _totalAssets;
+    // FX-6b: lets tests simulate a protocol-level withdraw failure (paused pool, frozen
+    // Comet market, etc.) that min-capping cannot prevent — distinct from an insufficient-
+    // balance revert, which the real recall pull loop's capping already avoids.
+    bool public withdrawShouldRevert;
 
     constructor(address _asset) {
         asset = Asset(_asset);
@@ -19,9 +23,16 @@ contract MockYieldSource is IYieldSource {
     }
 
     function withdraw(uint256 amount) external override {
+        require(!withdrawShouldRevert, "mock: withdraw disabled (simulated protocol pause)");
         _totalAssets -= amount;
         bool success = asset.transfer(msg.sender, amount);
         require(success, "withdraw in mock yield failed");
+    }
+
+    // Helper for tests — simulate a protocol-level condition that reverts every withdraw
+    // (e.g. a paused Aave pool or frozen Comet market), independent of balance sufficiency.
+    function setWithdrawShouldRevert(bool shouldRevert) external {
+        withdrawShouldRevert = shouldRevert;
     }
 
     function totalAssets() external view override returns (uint256) {

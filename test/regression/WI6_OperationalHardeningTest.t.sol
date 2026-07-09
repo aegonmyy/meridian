@@ -108,20 +108,38 @@ contract WI6_OperationalHardeningTest is BaseHubTest {
     }
 
     // ── storage helpers ──────────────────────────────────────────────────────
-    // pendingConfirms is a dynamic array at slot 4 (verified via
-    // `forge inspect src/Spoke.sol:SpokeVault storage-layout`). Each PendingConfirm element
-    // occupies 4 slots: messageType, messageId, actualAmount, resolved.
+    // AUTHORITATIVE SOURCE: re-run `forge inspect src/Spoke.sol:SpokeVault storage-layout`
+    // whenever Spoke.sol's state variable declarations change.
+    // pendingConfirms is a dynamic array at slot 4. Each PendingConfirm element occupies 4
+    // slots: messageType, messageId, actualAmount, resolved. unresolvedConfirmCount (FX-6a)
+    // is a plain uint256 at slot 5 — setHub's guard reads this counter directly (no longer a
+    // linear scan of pendingConfirms), so injecting an entry must also bump it or the guard
+    // won't trip.
     function _injectPendingConfirm(bytes32 messageId) internal {
-        vm.store(address(spoke), bytes32(uint256(4)), bytes32(uint256(1))); // length = 1
-        uint256 base = uint256(keccak256(abi.encode(uint256(4))));
+        uint256 lengthBefore = spoke.pendingConfirmsLength();
+        vm.store(
+            address(spoke),
+            bytes32(uint256(4)),
+            bytes32(lengthBefore + 1)
+        );
+        uint256 base = uint256(keccak256(abi.encode(uint256(4)))) +
+            (lengthBefore * 4);
         vm.store(address(spoke), bytes32(base), bytes32(uint256(4))); // CONFIRM_RECEIPT
         vm.store(address(spoke), bytes32(base + 1), messageId);
         vm.store(address(spoke), bytes32(base + 2), bytes32(uint256(0))); // actualAmount
         vm.store(address(spoke), bytes32(base + 3), bytes32(uint256(0))); // resolved = false
+
+        uint256 currentCount = spoke.unresolvedConfirmCount();
+        vm.store(address(spoke), bytes32(uint256(5)), bytes32(currentCount + 1));
     }
 
     function _markPendingConfirmResolved(uint256 index) internal {
         uint256 base = uint256(keccak256(abi.encode(uint256(4)))) + (index * 4);
         vm.store(address(spoke), bytes32(base + 3), bytes32(uint256(1))); // resolved = true
+
+        uint256 currentCount = spoke.unresolvedConfirmCount();
+        if (currentCount > 0) {
+            vm.store(address(spoke), bytes32(uint256(5)), bytes32(currentCount - 1));
+        }
     }
 }

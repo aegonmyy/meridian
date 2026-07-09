@@ -100,6 +100,13 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      are skipped on retry. Grows only when LINK is exhausted or the router hiccups.
     PendingConfirm[] public pendingConfirms;
 
+    /// @notice Count of pendingConfirms entries not yet resolved
+    /// @dev FX-6a — maintained incrementally (incremented in _queueConfirm, decremented in
+    ///      retryConfirm on success) so setHub's guard is O(1) instead of linear-scanning
+    ///      the append-only pendingConfirms array on every call. The array itself stays
+    ///      untouched (history is useful) — only this counter changes.
+    uint256 public unresolvedConfirmCount;
+
     // =========================================================================
     // Events
     // =========================================================================
@@ -137,6 +144,19 @@ contract SpokeVault is CCIPReceiver, Ownable {
     /// @param requested The amount the hub asked for
     /// @param actualPulled The amount actually pulled from idle + adapters
     event RecallShortfall(uint256 requested, uint256 actualPulled);
+
+    /// @notice Emitted when a single adapter's pull fails during a WITHDRAW_AMOUNT recall
+    /// @dev FX-6b. Min-capping (pullAmount <= adapter.totalAssets()) already prevents the
+    ///      insufficient-balance revert; this covers the residual case — a protocol-level
+    ///      condition (paused Aave pool, frozen Comet market) that still reverts withdraw()
+    ///      regardless of the requested amount. That adapter's leg is skipped; the loop
+    ///      continues with the remaining adapters, and the truthful actualPulled (via
+    ///      RecallShortfall if short) still reaches the hub instead of stalling the whole
+    ///      recall — the original Issue-1 shape this closes.
+    /// @param adapter The protocol identifier whose pull failed
+    /// @param attempted The amount that was being pulled from it
+    /// @param reason Raw revert reason bytes
+    event RecallPullFailed(bytes32 indexed adapter, uint256 attempted, bytes reason);
 
     /// @notice Emitted when an outbound confirm's ccipSend fails and is queued for retry
     /// @param index Index into pendingConfirms where this record was stored
@@ -239,7 +259,7 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      wait out every queued confirm via retryConfirm() before rotating Hub.
     function setHub(address _hub) external onlyOwner {
         if (_hub == address(0)) revert ZeroAddress();
-        if (_hasUnresolvedConfirms()) revert PendingConfirmsOutstanding();
+        if (unresolvedConfirmCount != 0) revert PendingConfirmsOutstanding();
         emit HubUpdated(HUB, _hub);
         HUB = _hub;
     }
@@ -290,6 +310,9 @@ contract SpokeVault is CCIPReceiver, Ownable {
         router.ccipSend(HUB_CHAIN_SELECTOR, ccipMessage);
 
         pendingConfirms[index].resolved = true;
+        if (unresolvedConfirmCount > 0) {
+            unresolvedConfirmCount -= 1;
+        }
         emit ConfirmRetried(index);
     }
 
@@ -460,6 +483,13 @@ contract SpokeVault is CCIPReceiver, Ownable {
     ///      only the delivered token envelope (destTokenAmounts), consistent with WI-4.
     ///      If actualPulled == 0 a token-less CONFIRM_WITHDRAWAL is still sent so the hub
     ///      learns the true state instead of waiting forever on a message that never comes.
+    ///      FX-6b: each adapter's withdraw() is now wrapped in try/catch. Min-capping already
+    ///      prevents the insufficient-balance revert, but not a protocol-level condition
+    ///      (paused Aave pool, frozen Comet market) that still reverts regardless of amount
+    ///      — without the wrap, that hard-reverted the whole handler, no confirm was ever
+    ///      sent, and the hub's withdrawal stalled exactly like the original Issue-1 shape.
+    ///      On failure: skip that adapter's leg (emit RecallPullFailed), continue the loop,
+    ///      and let the already-truthful actualPulled confirm report whatever was pulled.
     /// @param _message Decoded CCIP message with single instruction — amount is the shortfall to recall
     function _handleWithdrawalWithAmount(
         CCIPHelpers.CcipMessage memory _message
@@ -503,8 +533,12 @@ contract SpokeVault is CCIPReceiver, Ownable {
                             : proportional;
                     }
                     if (pullAmount == 0) continue;
-                    adapters[_adapters[i]].adapter.withdraw(pullAmount);
-                    pulledFromAdapters += pullAmount;
+                    bytes32 protocolId = _adapters[i];
+                    try adapters[protocolId].adapter.withdraw(pullAmount) {
+                        pulledFromAdapters += pullAmount;
+                    } catch (bytes memory reason) {
+                        emit RecallPullFailed(protocolId, pullAmount, reason);
+                    }
                 }
                 totalPulled += pulledFromAdapters;
             }
@@ -653,17 +687,8 @@ contract SpokeVault is CCIPReceiver, Ownable {
                 resolved: false
             })
         );
+        unresolvedConfirmCount += 1;
         emit ConfirmSendFailed(pendingConfirms.length - 1, _type, _messageId);
-    }
-
-    /// @notice True if any pendingConfirms entry is still unresolved
-    /// @dev Used by setHub() (WI-6) to block Hub rotation while a confirm is in flight.
-    function _hasUnresolvedConfirms() internal view returns (bool) {
-        uint256 length = pendingConfirms.length;
-        for (uint256 i = 0; i < length; i++) {
-            if (!pendingConfirms[i].resolved) return true;
-        }
-        return false;
     }
 
     // =========================================================================

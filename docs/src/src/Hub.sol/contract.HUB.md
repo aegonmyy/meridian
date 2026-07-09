@@ -1,8 +1,8 @@
 # HUB
-[Git Source](https://github.com/aegonmyy/meridian/blob/04fdcb3887d6bfe7076e798735b94bee541e7ecf/src/Hub.sol)
+[Git Source](https://github.com/aegonmyy/meridian/blob/8f085e328b747676203173bc0d1ecf2a95d5e520/src/Hub.sol)
 
 **Inherits:**
-ERC4626, CCIPReceiver, Ownable
+ERC4626, CCIPReceiver, Ownable, Pausable
 
 **Title:**
 HubVault
@@ -41,6 +41,85 @@ Stale reports trigger Path 2 withdrawal — a REPORT_BALANCE refresh cycle.
 
 ```solidity
 uint256 public constant MAX_STALENESS = 1 hours
+```
+
+
+### WITHDRAWAL_TIMEOUT
+Grace period after which an unsettled withdrawal becomes cancellable
+
+Backstop for a withdrawal stuck in SettlementDeferred (persistent insolvency) or
+a Path 3 recall leg that never arrives. Cancelling returns escrowed shares —
+the user keeps their claim on any later-arriving leg funds via ordinary idle.
+
+
+```solidity
+uint256 public constant WITHDRAWAL_TIMEOUT = 24 hours
+```
+
+
+### RECALL_HAIRCUT_BPS
+Basis-point haircut applied to a spoke's reported balance when sizing a Path 3 recall leg
+
+Safety margin against stale spokeBalances — never ask a spoke for more than
+(10000 - RECALL_HAIRCUT_BPS)/10000 of what hub believes it holds.
+
+
+```solidity
+uint256 public constant RECALL_HAIRCUT_BPS = 50
+```
+
+
+### TRANSIT_RECONCILE_DELAY
+Minimum age of a stuck in-transit leg before the owner may reconcile it
+
+WI-5 — replaces the removed adjustInTransitAssets. Operational order: attempt
+CCIP manual execution first; reconcile only when the message is provably dead
+(CCIP Explorer confirms permanent FAILURE and manual execution cannot recover
+it). The delay exists so a merely-slow (not dead) message isn't reconciled out
+from under a legitimate in-flight confirm.
+
+
+```solidity
+uint256 public constant TRANSIT_RECONCILE_DELAY = 7 days
+```
+
+
+### MAX_YIELD_BPS
+Upside band width, in bps, a spoke's reported balance may exceed netSentToSpoke by
+
+WI-7 (Issue 7b, Option A). Under-reporting (losses) always passes — it deflates
+rather than inflates share price, which is the direction that's safe to trust.
+
+
+```solidity
+uint256 public constant MAX_YIELD_BPS = 2_000
+```
+
+
+### REPORT_DUST
+Flat USDC dust allowance added on top of the MAX_YIELD_BPS band
+
+Absorbs rounding noise for small spokes where a percentage-only band would be
+too tight to be useful.
+
+
+```solidity
+uint256 public constant REPORT_DUST = 100e6
+```
+
+
+### LOSS_ALERT_BPS
+Bps drop between consecutive reports that triggers an informational event
+
+Not one of the plan's named tunable constants (WITHDRAWAL_TIMEOUT,
+RECALL_HAIRCUT_BPS, TRANSIT_RECONCILE_DELAY, MAX_YIELD_BPS, REPORT_DUST) — the
+plan asks for "an informational event when it drops >X% between reports" without
+specifying X. Judgment call, flagged for review: 500 bps (5%) as a reasonable
+default. Purely informational — never blocks or quarantines anything.
+
+
+```solidity
+uint256 public constant LOSS_ALERT_BPS = 500
 ```
 
 
@@ -130,12 +209,26 @@ mapping(uint64 => uint256) public lastReportTimestamp
 ### pendingWithdrawals
 Pending withdrawals keyed by messageId awaiting async settlement
 
-messageId is keccak256(receiver, timestamp) — unique per withdrawal per block.
-Same-block collision is a known v1 limitation; nonce will be added in v2.
+messageId is derived from a monotonic nonce via _newMessageId — unique
+across the hub's lifetime, so same-block withdrawals never collide.
 
 
 ```solidity
 mapping(bytes32 => PendingWithdrawal) public pendingWithdrawals
+```
+
+
+### legToWithdrawal
+Maps a Path 3 recall leg's messageId back to the withdrawal id it belongs to
+
+Set when a leg is dispatched, read (not deleted) on arrival — deliberately never
+deleted so a late-arriving leg for an already-settled or cancelled withdrawal can
+still be recognized and routed to the orphaned-arrival no-op path instead of being
+silently mistaken for a fresh, unrelated Rebalancer-driven recall (WI-3).
+
+
+```solidity
+mapping(bytes32 => bytes32) public legToWithdrawal
 ```
 
 
@@ -160,6 +253,108 @@ Deleted after the callback is processed.
 
 ```solidity
 mapping(bytes32 => uint256) public inTransitAmount
+```
+
+
+### transitLegs
+Maps CCIP messageId to the origin selector and send time of that DEPOSIT leg
+
+WI-5/FX-2 — set in _sendToSpoke alongside inTransitAmount. Deleted alongside
+inTransitAmount on both the normal path (_handleDepositCallback) and
+reconciliation (reconcileTransit) — the latter also uses the stored selector to
+decrement inTransitToSpoke, which the old inTransitSince-only design could not do.
+
+
+```solidity
+mapping(bytes32 => TransitLeg) public transitLegs
+```
+
+
+### inTransitToSpoke
+Count of outstanding in-flight DEPOSIT legs per spoke selector
+
+WI-6 — incremented in _sendToSpoke alongside inTransitAmount (one per DEPOSIT
+message sent to that selector), decremented in _handleDepositCallback when that
+selector's CONFIRM_RECEIPT lands. Guards removeSpoke: disabling a spoke while it
+has in-flight legs turns their eventual CONFIRM_RECEIPT into NotSpoke poison
+(the spoke would still be mid-flight but no longer isValidSpoke).
+
+
+```solidity
+mapping(uint64 => uint256) public inTransitToSpoke
+```
+
+
+### netSentToSpoke
+Net USDC ever sent to a spoke via DEPOSIT, minus actual USDC ever recalled back
+
+WI-7 — the baseline a spoke's self-reported balance is checked against.
+Incremented in _sendToSpoke for DEPOSIT messages; decremented by the ACTUAL
+arrived amount (destTokenAmounts, never the payload's claimed amount) on every
+CONFIRM_WITHDRAWAL arrival, consistent with WI-4. Clamped at 0 — a spoke cannot
+recall more than the hub believes it ever sent without that surplus itself being
+yield, which the upside band below is what actually polices.
+FX-3: also REBASED (overwritten, not incremented) to the accepted value by
+acceptQuarantinedReport — the band is flat and time-blind, so without a durable
+rebase on accept, genuine cumulative yield eventually exceeds it permanently and
+every honest report after an accept would immediately re-quarantine.
+
+
+```solidity
+mapping(uint64 => uint256) public netSentToSpoke
+```
+
+
+### quarantinedReports
+A quarantined self-reported balance awaiting owner review
+
+WI-7. Set when a report exceeds the upside-only sanity band; spokeBalances is
+left untouched (never clamped — clamping corrupts pricing in the other
+direction). Owner resolves via acceptQuarantinedReport or rejectQuarantinedReport.
+
+
+```solidity
+mapping(uint64 => uint256) public quarantinedReports
+```
+
+
+### activeQuarantineCount
+Count of spokes currently holding a quarantined report
+
+Used to know when it is safe to unpause — resolving one quarantined spoke must
+not unpause the vault while another remains quarantined.
+
+
+```solidity
+uint256 public activeQuarantineCount
+```
+
+
+### outboundGasLimit
+Gas limit supplied to the CCIP router for all outbound messages
+
+Configurable by owner. Default 1_500_000 — covers the most expensive spoke
+operations (deposit → adapter → CONFIRM_RECEIPT CCIP send).
+Increase via setOutboundGasLimit() if messages fail at destination.
+
+
+```solidity
+uint32 public outboundGasLimit = 1_500_000
+```
+
+
+### _messageNonce
+Monotonic counter used to derive collision-free internal message ids
+
+Incremented for every id produced by _newMessageId. Because it is part of
+the preimage, two operations in the same block (same amount / receiver /
+target) can never share an id — this is the fix for the content-derived
+id collisions that previously corrupted inTransitAmount bookkeeping and
+overwrote pending withdrawals.
+
+
+```solidity
+uint256 private _messageNonce
 ```
 
 
@@ -238,6 +433,59 @@ function setRebalancer(address _rebalancer) external onlyOwner;
 |`_rebalancer`|`address`|New Rebalancer contract address|
 
 
+### setOutboundGasLimit
+
+Updates the gas limit passed to CCIP router for all outbound messages
+
+Increase if CCIP messages land with execution failure at the spoke.
+Default 1_500_000 covers most operations including adapter deposits + CCIP reply.
+
+
+```solidity
+function setOutboundGasLimit(uint32 _gasLimit) external onlyOwner;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`_gasLimit`|`uint32`|New gas limit — must be > 0 and reasonable for spoke execution|
+
+
+### reconcileTransit
+
+Releases a specific, aged, tracked in-transit leg whose CONFIRM_RECEIPT will
+provably never arrive (dead lane, spoke decommissioned, permanent CCIP failure)
+
+WI-5 — replaces the removed adjustInTransitAssets, which let the owner write
+inTransitAssets to ANY value with no evidence, bound, or delay — an unbounded
+write to a share-price input. This can only write down a SPECIFIC id by its
+EXACT tracked amount, and only after TRANSIT_RECONCILE_DELAY has passed since it
+was sent. It can never invent value or inflate the vault.
+Operational order: attempt CCIP manual execution first; call this only once the
+message is provably dead. A late CONFIRM_RECEIPT arriving after reconciliation
+is harmless — inTransitAmount[id] is already deleted, so
+`inTransitAssets -= inTransitAmount[id]` in _handleDepositCallback subtracts
+zero and only updates the spoke balance (see WI5 regression tests).
+FX-2: also decrements inTransitToSpoke[selector] for the leg's origin selector
+(read from the stored TransitLeg, never an owner-supplied parameter — the stored
+value is the only trustworthy source). Without this, a reconciled leg — by
+definition one whose confirm will never arrive — left inTransitToSpoke
+permanently nonzero, making the safe removeSpoke path revert
+SpokeHasInFlightLegs forever for that selector even after the spoke was fully
+drained, forcing forceRemoveSpoke as the routine tool for exactly the dead-lane
+scenario this function exists to clean up.
+
+
+```solidity
+function reconcileTransit(bytes32 messageId) external onlyOwner;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`messageId`|`bytes32`|The stuck DEPOSIT leg's internal message id|
+
+
 ### addSpoke
 
 Registers a new spoke or updates an existing spoke's contract address
@@ -261,11 +509,20 @@ function addSpoke(uint64 _chainSelector, address _spokeAddress) external onlyOwn
 
 ### removeSpoke
 
-Disables a spoke by setting its exists flag to false
+Disables a spoke by setting its exists flag to false — safe path, default choice
 
-Emergency mechanism — does not remove from spokeChainSelectors array.
-Inactive spokes are skipped during iteration via the exists flag.
-Also clears addressToSelector reverse mapping for the spoke address.
+WI-6 guard: requires spokeBalances[selector] == 0 and no in-flight legs
+(inTransitToSpoke[selector] == 0). Rationale: removing a FUNDED spoke instantly
+craters totalManagedAssets() by that spoke's reported balance — a mispricing
+window that shortchanges every share until re-registered — and turns any
+still-in-flight CONFIRM_RECEIPT for that selector into NotSpoke poison the moment
+it lands (isValidSpoke() goes false mid-flight). Drain the spoke (recallFromSpoke
+until spokeBalances[selector] == 0) and let in-flight legs land first; only then
+is this safe. For true emergencies where waiting isn't acceptable, see
+forceRemoveSpoke — the unsafe path is intentionally a separate, loudly-named
+function so the safe path stays the default.
+Does not remove from spokeChainSelectors array — inactive spokes are skipped
+during iteration via the exists flag. Also clears addressToSelector.
 
 
 ```solidity
@@ -276,6 +533,33 @@ function removeSpoke(uint64 _chainSelector) external onlyOwner;
 |Name|Type|Description|
 |----|----|-----------|
 |`_chainSelector`|`uint64`|CCIP chain selector of the spoke to disable|
+
+
+### forceRemoveSpoke
+
+Emergency: disables a spoke WITHOUT the safety checks removeSpoke enforces
+
+WI-6. Use only when the safe path (removeSpoke) is genuinely not viable — e.g.
+the spoke contract itself is compromised and continuing to interact with it
+(even to drain it) is the greater risk. Skipping the checks means:
+(a) totalManagedAssets() instantly drops by spokeBalances[selector] — a real,
+immediate mispricing event against every current shareholder, not merely a
+cosmetic one; (b) any CONFIRM_RECEIPT still in flight for this selector will
+revert with NotSpoke on arrival (poisoning that CCIP message permanently — the
+DEPOSIT's inTransitAmount becomes a WI-5 reconcileTransit candidate once its
+TRANSIT_RECONCILE_DELAY has passed, since the confirm can now never land).
+Owner-only, separate from removeSpoke by design so the destructive path is never
+the accidental default.
+
+
+```solidity
+function forceRemoveSpoke(uint64 _chainSelector) external onlyOwner;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`_chainSelector`|`uint64`|CCIP chain selector of the spoke to forcibly disable|
 
 
 ### isValidSpoke
@@ -329,10 +613,14 @@ function sendToSpoke(uint64 _chainSelector, CCIPHelpers.AdapterInstructions[] me
 
 Sends a recall instruction to a spoke to return funds to hub via CCIP
 
-Only callable by Rebalancer or hub itself (via this.recallFromSpoke in _withdraw).
+Only callable by hub itself, via this.recallFromSpoke in _withdraw's Path 3.
 Sends a WITHDRAW_AMOUNT message — instruction only, no tokens attached outbound.
 Spoke pulls proportionally from its adapters and sends tokens back via CCIP.
-Used in Path 3 withdrawals to retrieve the shortfall not covered by idle.
+The messageId here matches an existing pendingWithdrawals entry so the arrival
+callback can settle it — this is what distinguishes this overload from the
+Rebalancer-driven one below, which creates no pendingWithdrawal and therefore
+must not accept a caller-supplied id (WI-1 ids are always hub-derived when there
+is nothing external to match against).
 
 
 ```solidity
@@ -351,6 +639,50 @@ function recallFromSpoke(
 |`_messageId`|`bytes32`|Matches the pendingWithdrawal entry so callback can settle correctly|
 
 
+### recallFromSpoke
+
+Rebalancer-driven recall — moves capital off an overweight spoke with no
+pendingWithdrawal attached; the arrived tokens simply become hub idle
+
+WI-3 (Issue 5, Option A). This is the missing "move weight off a chain" lever —
+without it the only way capital left a spoke was via a user-triggered Path 3
+withdrawal. The hub derives its own fresh id via _newMessageId (WI-1); callers
+never supply one, since there is no pendingWithdrawal to match against.
+Intended v1 operator flow (see Rebalancer.recallFromSpoke NatSpec for the full
+sequence): off-chain diff → recallFromSpoke per overweight chain → await
+RecallCompleted → proposeAllocation sized to the now-idle funds. The on-chain
+diff engine that would automate this sequencing is explicitly out of scope (v2).
+
+
+```solidity
+function recallFromSpoke(uint64 _chainSelector, uint256 _amount) external onlyRebalancer;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`_chainSelector`|`uint64`|CCIP chain selector of the spoke to recall from|
+|`_amount`|`uint256`|USDC amount to recall — must be nonzero|
+
+
+### idleBalance
+
+Returns the USDC balance sitting idle on hub — not deployed or in transit
+
+External view mirror of _idleBalance(), exposed so Rebalancer can pre-check
+solvency before dispatching a proposal (WI-3 friendly pre-check).
+
+
+```solidity
+function idleBalance() external view returns (uint256);
+```
+**Returns**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`<none>`|`uint256`|Idle USDC balance of this contract|
+
+
 ### rebalance
 
 Sends intra-spoke rebalance instructions to move capital between adapters
@@ -359,14 +691,14 @@ Only callable by Rebalancer. Sends a REBALANCE message — instruction only,
 no tokens attached. Spoke withdraws from source adapter and deposits into target
 adapter on the same chain. No capital leaves the spoke chain.
 Spoke responds with CONFIRM_REBALANCE carrying updated spoke balance.
+The message id is derived internally via the nonce'd _newMessageId helper —
+callers no longer supply one (removed in WI-1 to eliminate id collisions).
 
 
 ```solidity
-function rebalance(
-    uint64 _chainSelector,
-    CCIPHelpers.AdapterInstructions[] memory _instructions,
-    bytes32 _messageId
-) external onlyRebalancer;
+function rebalance(uint64 _chainSelector, CCIPHelpers.AdapterInstructions[] memory _instructions)
+    external
+    onlyRebalancer;
 ```
 **Parameters**
 
@@ -374,7 +706,6 @@ function rebalance(
 |----|----|-----------|
 |`_chainSelector`|`uint64`|CCIP chain selector of the target spoke|
 |`_instructions`|`CCIPHelpers.AdapterInstructions[]`|Array specifying source adapter, target adapter, and amount to move|
-|`_messageId`|`bytes32`|Unique identifier for this rebalance operation|
 
 
 ### _deposit
@@ -383,10 +714,16 @@ Overrides ERC4626._deposit — no additional logic needed beyond standard behavi
 
 totalPrincipal tracking was removed as it was dead state — totalAssets() via
 totalManagedAssets() is the source of truth for share pricing.
+WI-7: whenNotPaused — user deposits pause while any spoke report is quarantined.
+(Whether capital-movement functions like sendToSpoke/recallFromSpoke should also
+be gated is Open Questions #4 — not decided here; only user entry/exit is paused.)
 
 
 ```solidity
-function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override;
+function _deposit(address caller, address receiver, uint256 assets, uint256 shares)
+    internal
+    override
+    whenNotPaused;
 ```
 **Parameters**
 
@@ -400,21 +737,39 @@ function _deposit(address caller, address receiver, uint256 assets, uint256 shar
 
 ### _withdraw
 
-Overrides ERC4626._withdraw to implement three-path async withdrawal
+Overrides ERC4626._withdraw to implement the WI-4 three-path async withdrawal engine
 
 Shares are transferred to hub at start and only burned on final settlement.
 No super() call — full flow is owned here.
-messageId = keccak256(receiver, timestamp) — same-block collision is a known
-v1 limitation; a nonce will be added in v2.
-Path 1 (sync): idle >= assets AND all spokes fresh → immediate settlement.
-Path 2 (async): idle >= assets AND any spoke stale → queue + REPORT_BALANCE.
-Path 3 (async): idle < assets → reserve idle, recall shortfall from best spoke.
+messageId is derived from a monotonic nonce via _newMessageId — collision-free.
+Path 1 (sync): idle >= assets AND all spokes fresh → immediate settlement at the
+quote taken this instant (no daylight between quote and settlement).
+Path 2 (async): idle >= assets AND any spoke stale → queue + REPORT_BALANCE;
+settles once ALL spokes report fresh (not on the first report — that was a bug).
+Path 3 (async): idle < assets → reserve available idle, plan recall legs across
+active spokes by descending spokeBalances, haircut-capped
+(RECALL_HAIRCUT_BPS) per leg. If the shortfall cannot be fully planned even
+across every active spoke, the ENTIRE call reverts with
+InsufficientRecallLiquidity — fail-closed, nothing locks, user keeps shares.
+Only if fully coverable does the hub commit (reserve idle, create the pending
+entry) and dispatch legs. Settlement itself only happens once ALL of this
+entry's legs have landed (pendingLegs == 0) — see _attemptSettleWithdrawal's
+FX-1 NatSpec for why early settlement out of free idle was removed.
+CLAIM-TIME PRICING (user-facing behavioral change from v1): for Path 2/3, the
+amount actually paid out is previewRedeem(shares) recomputed AT SETTLEMENT, not
+the quote taken here. Yield accrued while pending is credited to the withdrawer;
+a loss reported while pending reduces their payout. See _attemptSettleWithdrawal.
+WI-7: whenNotPaused — new withdrawal REQUESTS pause while any spoke report is
+quarantined. Settlement of ALREADY-pending withdrawals (attemptSettlement,
+cancelWithdrawal) is intentionally NOT gated — those must keep working during a
+pause so users with in-flight withdrawals aren't additionally stuck.
 
 
 ```solidity
 function _withdraw(address caller, address receiver, address owner, uint256 assets, uint256 shares)
     internal
-    override;
+    override
+    whenNotPaused;
 ```
 **Parameters**
 
@@ -427,35 +782,90 @@ function _withdraw(address caller, address receiver, address owner, uint256 asse
 |`shares`|`uint256`|Number of shares to burn|
 
 
-### _processWithdrawal
+### cancelWithdrawal
 
-Settles a withdrawal by burning shares and transferring USDC to receiver
+Cancels a pending withdrawal after WITHDRAWAL_TIMEOUT has elapsed
 
-Called directly for Path 1 (sync) and from CCIP callbacks for Path 2 and 3.
-Decrements reservedAssets by exactly the amount that was reserved at queue time
-— handles all three paths correctly regardless of partial idle reservation.
+Backstop for a withdrawal stuck in SettlementDeferred, or a Path 3 leg that never
+arrives. Returns escrowed shares to the owner and releases the reservation.
+Already-arrived leg funds (if any) remain vault idle — correct, since the caller
+got their shares back and thus their proportional claim on those assets too.
+Late-arriving legs after cancellation hit the unknown-leg no-op path in
+_handleWithdrawalCallback (legToWithdrawal still resolves, but
+pendingWithdrawals[id].shares == 0 after this delete) — no special handling needed.
 
 
 ```solidity
-function _processWithdrawal(
-    address owner,
-    address receiver,
-    uint256 shares,
-    uint256 assets,
-    uint256 _reservedAssets,
-    bytes32 _messageId
-) internal;
+function cancelWithdrawal(bytes32 id) external;
 ```
 **Parameters**
 
 |Name|Type|Description|
 |----|----|-----------|
-|`owner`|`address`|Address whose shares are burned|
-|`receiver`|`address`|Address receiving the USDC|
-|`shares`|`uint256`|Number of shares to burn from hub's escrow balance|
-|`assets`|`uint256`|Amount of USDC to transfer to receiver|
-|`_reservedAssets`|`uint256`|Amount to decrement from reservedAssets (set at queue time)|
-|`_messageId`|`bytes32`|MessageId emitted in WithdrawalProcessed for off-chain tracking|
+|`id`|`bytes32`|The withdrawal id to cancel|
+
+
+### attemptSettlement
+
+Attempts to settle a pending withdrawal at its claim-time price
+
+Permissionless — anyone can nudge a pending withdrawal to retry settlement (also
+called internally, wrapped in try/catch, from the CCIP arrival callbacks so an
+external-call failure here — e.g. safeTransfer to an incompatible receiver — can
+never revert a token-carrying CCIP execution). Never reverts on insolvency; see
+_attemptSettleWithdrawal.
+
+
+```solidity
+function attemptSettlement(bytes32 id) external;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`id`|`bytes32`|The withdrawal id to attempt settlement for|
+
+
+### _attemptSettleWithdrawal
+
+Core non-reverting settlement attempt — claim-time pricing, freshness/leg
+gated, solvency-gated
+
+FX-1: gating moved INSIDE this function so it holds for every caller, including
+the permissionless external `attemptSettlement`. Previously the freshness/arrival
+gates existed only at the CCIP callback call sites — anyone could call
+`attemptSettlement(id)` directly the instant a Path 2 withdrawal was queued and
+settle at the still-stale price, reopening the exact bug this engine fixed.
+Classification is derived purely from stored state (no separate "which path"
+flag needed): an entry with `pendingLegs > 0 || arrivedAssets > 0` was routed
+through Path 3 (it has, or is expecting, recall legs); otherwise it's a pure
+Path 2 entry.
+- Pure Path 2: defer unless `_allSpokesFresh()` — settlement must use a fully
+refreshed balance picture, not whatever was stale at request time.
+- Path 3: defer unless `pendingLegs == 0` — DECIDED POLICY (see FX-1 escalation):
+no early settlement out of free idle while legs are still outstanding. A
+user's own recalled liquidity is no longer a commons another withdrawer can
+claim first via idle, and settlement timing becomes predictable — once all of
+THIS entry's legs have landed, not whenever idle happens to be sufficient.
+CLAIM-TIME PRICING: payout is previewRedeem(shares) recomputed NOW, not the quote
+taken at request time. quotedAssets is reference/sizing only, never a promise —
+this is the decided v2 semantic (yield during flight settles from free idle by
+design; a loss during flight reduces payout).
+SOLVENCY: settles only if idle currently claimable by THIS entry alone (total idle
+minus everyone else's reservation) covers payout — never touches other entries'
+reservations. If not yet solvent, emits SettlementDeferred and returns; the entry
+stays pending for a later retry (another leg arrival, cancellation is the backstop).
+Never reverts on insufficiency — that would poison a token-carrying CCIP message.
+
+
+```solidity
+function _attemptSettleWithdrawal(bytes32 id) internal;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`id`|`bytes32`|The withdrawal id to attempt settlement for|
 
 
 ### _requestAllBalanceReports
@@ -478,23 +888,25 @@ function _requestAllBalanceReports(bytes32 _messageId) public onlyRebalancer;
 |`_messageId`|`bytes32`|Forwarded to spokes so responses can be matched to the pending withdrawal|
 
 
-### _findBestSpoke
+### _spokesByDescendingBalance
 
-Returns the chain selector of the spoke with the highest reported balance
+Returns active spoke selectors ordered by descending reported balance
 
-Used in Path 3 to select which spoke to recall from. spokeBalances may be
-slightly stale but safe — balances only decrease via user-triggered recalls,
-so the selected spoke will always have at least as much as reported.
+WI-4 replaces the old single-best-spoke selection — Path 3 now plans legs
+across as many spokes as needed (greedy, largest first) rather than recalling
+everything from one spoke. spokeBalances may be slightly stale; RECALL_HAIRCUT_BPS
+in the caller is the safety margin for that, not this ordering.
+Selection sort — active spoke counts are small by design (a handful per protocol).
 
 
 ```solidity
-function _findBestSpoke() internal view returns (uint64 bestSelector);
+function _spokesByDescendingBalance() internal view returns (uint64[] memory sorted);
 ```
 **Returns**
 
 |Name|Type|Description|
 |----|----|-----------|
-|`bestSelector`|`uint64`|Chain selector of the spoke with the highest reported USDC balance|
+|`sorted`|`uint64[]`|Active chain selectors, descending by spokeBalances|
 
 
 ### _sendToSpoke
@@ -519,12 +931,31 @@ function _sendToSpoke(uint64 _chainSelector, CCIPHelpers.CcipMessage memory _mes
 |`_message`|`CCIPHelpers.CcipMessage`|Fully populated CcipMessage to encode and send|
 
 
-### _messageIdForWithdrawal
+### _newMessageId
+
+Derives a collision-free internal message id from a monotonic nonce
+
+Every id is unique across the hub's lifetime — the incrementing nonce
+guarantees no two operations (deposits, withdrawals, rebalances, recalls)
+ever share an id, even within a single block. The additional context,
+chainid, and address inputs harden the id against cross-contract reuse.
 
 
 ```solidity
-function _messageIdForWithdrawal(address receiver) internal view returns (bytes32);
+function _newMessageId(bytes32 context) internal returns (bytes32);
 ```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`context`|`bytes32`|Caller-supplied disambiguator (e.g. selector or receiver)|
+
+**Returns**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`<none>`|`bytes32`|A unique bytes32 message id|
+
 
 ### totalAssets
 
@@ -615,6 +1046,74 @@ function _allSpokesFresh() internal view returns (bool);
 |`<none>`|`bool`|True only if every active spoke has reported within the last MAX_STALENESS seconds|
 
 
+### _applyReportedBalance
+
+Applies (or quarantines) a spoke's self-reported balance — the single choke
+point every balance-carrying callback routes through
+
+WI-7 (Issue 7b, Option A). Upside-only sanity band: accept if
+`reported <= netSentToSpoke[selector] * (10000 + MAX_YIELD_BPS) / 10000 + REPORT_DUST`.
+Under-reporting always passes — it deflates share price, the safe direction —
+but a drop exceeding LOSS_ALERT_BPS since the last report emits an informational
+event. On breach: NEVER clamp (clamping corrupts pricing the other direction) —
+quarantine instead. spokeBalances is left untouched, the report is stored in
+quarantinedReports, SuspiciousSpokeReport fires, and deposits/withdrawals pause.
+This function itself never reverts — callers include token-carrying CCIP arrival
+paths (CONFIRM_WITHDRAWAL) that must still deliver their tokens and settle
+regardless of whether the reported BALANCE passes the band.
+
+
+```solidity
+function _applyReportedBalance(uint64 _chainSelector, uint256 reported) internal;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`_chainSelector`|`uint64`|The reporting spoke's chain selector|
+|`reported`|`uint256`|The spoke's self-reported aggregate balance|
+
+
+### acceptQuarantinedReport
+
+Owner accepts a quarantined report — applies it to spokeBalances and unpauses
+once no spoke has an outstanding quarantine
+
+WI-7. Use once the owner has independently confirmed the reported balance is
+legitimate (e.g. genuine outsized yield, or a one-off catch-up report after a
+period of stale reporting).
+
+
+```solidity
+function acceptQuarantinedReport(uint64 _chainSelector) external onlyOwner;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`_chainSelector`|`uint64`|The spoke whose quarantined report to accept|
+
+
+### rejectQuarantinedReport
+
+Owner rejects a quarantined report — discards it, spokeBalances stays as it
+was before the suspicious report, unpauses once no spoke has an outstanding
+quarantine
+
+WI-7. Use when the report is confirmed bogus (compromised spoke, decoding bug,
+etc.) — spokeBalances simply keeps its last-known-good value.
+
+
+```solidity
+function rejectQuarantinedReport(uint64 _chainSelector) external onlyOwner;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`_chainSelector`|`uint64`|The spoke whose quarantined report to reject|
+
+
 ### _handleRebalanceCallback
 
 Handles CONFIRM_REBALANCE from spoke — updates balance after intra-spoke rebalance
@@ -655,11 +1154,16 @@ function _handleDepositCallback(CCIPHelpers.CcipMessage memory _message, uint64 
 
 ### _handleReportBalanceCallback
 
-Handles REPORT_BALANCE from spoke — updates balance and settles pending Path 2 withdrawal
+Handles REPORT_BALANCE from spoke — updates balance and attempts to settle a
+pending Path 2 withdrawal once ALL active spokes are fresh
 
-Spoke sends this in response to a REPORT_BALANCE request from hub.
-If a pending withdrawal exists for this messageId it is settled immediately
-since idle was already reserved and balances are now confirmed fresh.
+Spoke sends this in response to a REPORT_BALANCE request from hub. WI-4 fix:
+previously settled on the FIRST spoke's report even with other spokes still
+stale — now gated on _allSpokesFresh() so settlement uses a fully-refreshed
+balance picture. Settlement itself is via attemptSettlement (claim-time pricing,
+non-reverting), wrapped in try/catch so an external-call failure inside
+settlement (e.g. safeTransfer to an incompatible receiver) can never revert this
+CCIP execution.
 
 
 ```solidity
@@ -675,15 +1179,27 @@ function _handleReportBalanceCallback(CCIPHelpers.CcipMessage memory _message, u
 
 ### _handleWithdrawalCallback
 
-Handles CONFIRM_WITHDRAWAL from spoke — funds arrived, settles pending Path 3 withdrawal
+Handles CONFIRM_WITHDRAWAL from spoke — funds arrived. Three cases:
+(1) a live Path 3 recall leg — credit the arrival and attempt settlement;
+(2) an orphaned leg (withdrawal was cancelled, or its entry is otherwise gone)
+— funds become ordinary idle, informational event only;
+(3) never a leg at all — a WI-3 Rebalancer-driven recall, funds become idle
 
-Spoke sends this after pulling funds from adapters and transferring USDC back to hub.
-By the time this fires, the shortfall USDC has arrived at hub. Combined with
-the idle that was reserved at queue time, hub has enough to settle the withdrawal.
+Spoke sends this after pulling funds from adapters and transferring USDC back to
+hub. actualAmount is read from destTokenAmounts (the CCIP token envelope) — the
+ground truth of what arrived — never from the payload, which carries no amount
+for confirm messages post-WI-2 (see docs/revert-audit.md). legToWithdrawal
+disambiguates case (2) from (3): a leg id is always registered at dispatch time,
+so `legToWithdrawal[id] != 0` proves this WAS a leg (case 1/2); a fresh WI-3 id
+was never registered as a leg (case 3).
 
 
 ```solidity
-function _handleWithdrawalCallback(CCIPHelpers.CcipMessage memory _message, uint64 _chainSelector) internal;
+function _handleWithdrawalCallback(
+    CCIPHelpers.CcipMessage memory _message,
+    uint64 _chainSelector,
+    Client.EVMTokenAmount[] memory destTokenAmounts
+) internal;
 ```
 **Parameters**
 
@@ -691,6 +1207,7 @@ function _handleWithdrawalCallback(CCIPHelpers.CcipMessage memory _message, uint
 |----|----|-----------|
 |`_message`|`CCIPHelpers.CcipMessage`|Decoded CCIP message carrying updated spokeBalance and reportTimestamp|
 |`_chainSelector`|`uint64`|Source chain selector identifying which spoke sent the message|
+|`destTokenAmounts`|`Client.EVMTokenAmount[]`|Token envelope delivered alongside this message — ground truth|
 
 
 ### spokeChainSelectorsLength
@@ -715,9 +1232,15 @@ function spokeChainSelectorsLength() external view returns (uint256);
 ### WithdrawalQueued
 Emitted when a withdrawal cannot be settled immediately and is queued
 
+`id` is required off-chain to call cancelWithdrawal() or attemptSettlement() —
+the hub never exposes a way to enumerate pending withdrawals, so this event is
+the only source of an owner's withdrawal id.
+
 
 ```solidity
-event WithdrawalQueued(address indexed owner, uint256 shares, uint256 assets, uint256 _reservedAssets);
+event WithdrawalQueued(
+    address indexed owner, bytes32 indexed id, uint256 shares, uint256 assets, uint256 _reservedAssets
+);
 ```
 
 **Parameters**
@@ -725,8 +1248,9 @@ event WithdrawalQueued(address indexed owner, uint256 shares, uint256 assets, ui
 |Name|Type|Description|
 |----|----|-----------|
 |`owner`|`address`|Address whose shares are held in escrow by hub|
+|`id`|`bytes32`|The withdrawal id keying this entry in pendingWithdrawals|
 |`shares`|`uint256`|Number of shares transferred to hub and locked|
-|`assets`|`uint256`|Full USDC value owed to the withdrawer on settlement|
+|`assets`|`uint256`|Full USDC value owed to the withdrawer on settlement (quote, not a promise — WI-4 claim-time pricing)|
 |`_reservedAssets`|`uint256`|Amount of idle USDC reserved at queue time (0 if none available)|
 
 ### WithdrawalProcessed
@@ -775,6 +1299,25 @@ event SpokeRemoved(uint64 indexed spokeSelector);
 |----|----|-----------|
 |`spokeSelector`|`uint64`|CCIP chain selector of the disabled spoke|
 
+### SpokeForceRemoved
+Emitted when a spoke is disabled via the unsafe forceRemoveSpoke path
+
+Loud by design — the presence of nonzero danglingBalance or danglingInFlightLegs
+signals exactly what was skipped and what operational cleanup remains.
+
+
+```solidity
+event SpokeForceRemoved(uint64 indexed spokeSelector, uint256 danglingBalance, uint256 danglingInFlightLegs);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`spokeSelector`|`uint64`|CCIP chain selector of the forcibly-disabled spoke|
+|`danglingBalance`|`uint256`|spokeBalances[selector] at the moment of removal — now instantly excluded from totalManagedAssets()|
+|`danglingInFlightLegs`|`uint256`|inTransitToSpoke[selector] at the moment of removal — legs whose eventual CONFIRM_RECEIPT will now revert with NotSpoke|
+
 ### SpokeBalanceUpdated
 Emitted whenever a spoke reports its current total balance to hub
 
@@ -792,32 +1335,263 @@ event SpokeBalanceUpdated(uint64 indexed chainSelector, uint256 balance);
 |`chainSelector`|`uint64`|Chain selector of the reporting spoke|
 |`balance`|`uint256`|Updated total balance reported by the spoke in USDC|
 
+### SentToSpoke
+Emitted when hub dispatches a CCIP message to a spoke
+
+ccipMessageId is the bytes32 returned by router.ccipSend() — track it on
+https://ccip.chain.link to monitor delivery status.
+amount is 0 for non-deposit message types.
+
+
+```solidity
+event SentToSpoke(
+    uint64 indexed chainSelector, bytes32 indexed ccipMessageId, bytes32 internalMessageId, uint256 amount
+);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`chainSelector`|`uint64`|Destination chain CCIP selector|
+|`ccipMessageId`|`bytes32`|CCIP protocol message ID from router.ccipSend()|
+|`internalMessageId`|`bytes32`|Hub's internal keccak256 message ID|
+|`amount`|`uint256`|USDC amount sent (0 for REBALANCE / REPORT_BALANCE)|
+
+### RecallCompleted
+Emitted when a CONFIRM_WITHDRAWAL arrives that matches no pendingWithdrawal
+
+This is the WI-3 rebalancer-driven recall completion signal — the off-chain
+agent watches for this to sequence "recall from overweight chain, then propose
+allocation to the now-idle funds." The arrived tokens become ordinary hub idle;
+no further hub-side action is needed.
+
+
+```solidity
+event RecallCompleted(uint64 indexed chainSelector, uint256 amount);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`chainSelector`|`uint64`|Chain selector the recall was sourced from|
+|`amount`|`uint256`|Actual USDC amount that arrived (from the CCIP token envelope)|
+
+### TransitReconciled
+Emitted when a stuck in-transit DEPOSIT leg is reconciled by the owner
+
+WI-5. amount is exactly the tracked inTransitAmount for this id — the owner
+cannot invent or inflate a value.
+
+
+```solidity
+event TransitReconciled(bytes32 indexed messageId, uint256 amount);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`messageId`|`bytes32`|The reconciled leg's internal message id|
+|`amount`|`uint256`|The exact amount released from inTransitAssets|
+
+### SuspiciousSpokeReport
+Emitted when a spoke's self-reported balance exceeds the upside-only sanity
+band and is quarantined instead of applied
+
+WI-7. spokeBalances[selector] is left untouched; deposits and withdrawals pause.
+
+
+```solidity
+event SuspiciousSpokeReport(uint64 indexed chainSelector, uint256 reported, uint256 ceiling);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`chainSelector`|`uint64`|The reporting spoke's chain selector|
+|`reported`|`uint256`|The rejected, quarantined value|
+|`ceiling`|`uint256`|The band ceiling it exceeded (netSentToSpoke-derived)|
+
+### SpokeBalanceDropped
+Emitted when a spoke's reported balance drops sharply between reports
+
+Informational only — under-reporting always passes the band (it deflates share
+price, the safe direction) but a sharp drop is worth an operator's attention.
+
+
+```solidity
+event SpokeBalanceDropped(uint64 indexed chainSelector, uint256 previous, uint256 reported);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`chainSelector`|`uint64`|The reporting spoke's chain selector|
+|`previous`|`uint256`|The previously recorded balance|
+|`reported`|`uint256`|The new, lower balance|
+
+### QuarantinedReportAccepted
+Emitted when the owner accepts a quarantined report
+
+
+```solidity
+event QuarantinedReportAccepted(uint64 indexed chainSelector, uint256 amount);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`chainSelector`|`uint64`|The spoke whose quarantined report was accepted|
+|`amount`|`uint256`|The value now applied to spokeBalances|
+
+### QuarantinedReportRejected
+Emitted when the owner rejects a quarantined report
+
+
+```solidity
+event QuarantinedReportRejected(uint64 indexed chainSelector, uint256 amount);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`chainSelector`|`uint64`|The spoke whose quarantined report was discarded|
+|`amount`|`uint256`|The discarded value|
+
+### OrphanedRecallArrival
+Emitted when a Path 3 recall leg or stray token arrival matches no live
+pendingWithdrawal — e.g. a leg for a withdrawal that was cancelled, or (as of
+FX-1) a late leg for an id whose entry has already been deleted for any other
+reason. Since FX-1, settlement never happens before all of an entry's legs
+have landed (`pendingLegs == 0`), so a live entry can no longer be settled out
+from under a still-outstanding leg.
+
+Funds become ordinary hub idle — no action needed, this is informational.
+
+
+```solidity
+event OrphanedRecallArrival(uint64 indexed chainSelector, uint256 amount);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`chainSelector`|`uint64`|Chain selector the arrival came from|
+|`amount`|`uint256`|Actual USDC amount that arrived|
+
+### SettlementDeferred
+Emitted when a settlement attempt finds insufficient claimable idle right now
+
+Non-fatal — the entry stays pending and a later confirm (another leg arrival, or
+another REPORT_BALANCE round for Path 2) retries. Never reverts a CCIP execution.
+
+
+```solidity
+event SettlementDeferred(bytes32 indexed id, uint256 payout, uint256 availableForThisEntry);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`id`|`bytes32`|The withdrawal id|
+|`payout`|`uint256`|Claim-time payout that would be owed if settled now|
+|`availableForThisEntry`|`uint256`|Idle currently claimable by this entry alone|
+
+### WithdrawalRepriced
+Emitted alongside WithdrawalProcessed when claim-time payout differs from the
+quote taken at request time (yield or loss accrued while the withdrawal was pending)
+
+
+```solidity
+event WithdrawalRepriced(bytes32 indexed id, uint256 quotedAssets, uint256 payout);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`id`|`bytes32`|The withdrawal id|
+|`quotedAssets`|`uint256`|previewRedeem(shares) at request time|
+|`payout`|`uint256`|Actual previewRedeem(shares) at settlement time|
+
+### WithdrawalCancelled
+Emitted when a timed-out pending withdrawal is cancelled by its owner
+
+
+```solidity
+event WithdrawalCancelled(bytes32 indexed id, uint256 shares);
+```
+
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`id`|`bytes32`|The withdrawal id|
+|`shares`|`uint256`|Shares returned to the owner|
+
 ## Structs
 ### PendingWithdrawal
 Tracks a queued withdrawal awaiting spoke balance confirmation or fund recall
 
-Created in Path 2 (stale balances) and Path 3 (insufficient idle).
-`_reservedAssets` tracks how much idle was locked at queue time so
-`reservedAssets` can be decremented precisely on settlement regardless of path.
-Path 1: no pending withdrawal created — settled synchronously.
-Path 2: `_reservedAssets == assets` — full idle reservation.
-Path 3: `_reservedAssets == idle` — partial reservation, remainder recalled from spoke.
+WI-4 withdrawal engine v2. Created in Path 2 (stale balances) and Path 3
+(insufficient idle). Path 1: no pending withdrawal created — settled synchronously.
+`quotedAssets` is the previewRedeem() value AT REQUEST TIME — reference and recall
+sizing only. It is NOT a promise: settlement recomputes payout via previewRedeem()
+again at claim time (claim-time pricing is the decided v2 semantic — a loss or
+gain reported while a Path 3 recall is in flight changes what the withdrawer
+actually receives). `reservedIdle` is the idle locked at request time
+(`<= quotedAssets`) — `reservedAssets` is decremented by exactly this amount on
+settlement or cancellation, regardless of what payout ends up being.
+`arrivedAssets` accumulates the ACTUAL token amounts (destTokenAmounts — never the
+payload's claimed amount) from each Path 3 recall leg as they land.
+`pendingLegs` counts outstanding Path 3 recall legs — 0 for Path 2 (no legs, just
+a REPORT_BALANCE refresh) and 0 once all Path 3 legs have arrived.
 
 
 ```solidity
 struct PendingWithdrawal {
     /// @dev Shares transferred to hub contract at queue time — burned on settlement
     uint256 shares;
-    /// @dev Full asset value owed to the withdrawer
-    uint256 assets;
-    /// @dev Block timestamp when withdrawal was queued
-    uint256 requestedAt;
+    /// @dev previewRedeem(shares) at request time — reference & recall sizing only, not a promise
+    uint256 quotedAssets;
+    /// @dev Idle USDC reserved (locked) at request time — <= quotedAssets
+    uint256 reservedIdle;
+    /// @dev Sum of ACTUAL recalled token arrivals for this withdrawal's Path 3 legs
+    uint256 arrivedAssets;
+    /// @dev Outstanding Path 3 recall legs — 0 for Path 2, decrements as legs arrive
+    uint32 pendingLegs;
+    /// @dev Block timestamp when withdrawal was queued — gates cancelWithdrawal via WITHDRAWAL_TIMEOUT
+    uint64 requestedAt;
     /// @dev Address that will receive the USDC on settlement
     address receiver;
-    /// @dev Address whose shares were transferred to hub
+    /// @dev Address whose shares were transferred to hub — also the only address that can cancel
     address owner;
-    /// @dev Amount of idle USDC reserved at queue time — 0 if no idle was available
-    uint256 _reservedAssets;
+}
+```
+
+### TransitLeg
+Tracks a single outstanding DEPOSIT leg's origin selector and send time
+
+FX-2. Replaces the old parallel `inTransitSince` mapping — reconcileTransit needs
+to know which selector's inTransitToSpoke counter to decrement, and an owner-
+supplied selector parameter would be unverifiable (the stored value is the only
+trustworthy source). Both fields fit one slot.
+
+
+```solidity
+struct TransitLeg {
+    /// @dev Chain selector the DEPOSIT was sent to
+    uint64 selector;
+    /// @dev block.timestamp the DEPOSIT was sent — gates TRANSIT_RECONCILE_DELAY
+    uint64 sentAt;
 }
 ```
 

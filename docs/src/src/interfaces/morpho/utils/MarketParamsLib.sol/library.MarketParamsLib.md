@@ -1,5 +1,5 @@
 # MarketParamsLib
-[Git Source](https://github.com/aegonmyy/meridian/blob/04fdcb3887d6bfe7076e798735b94bee541e7ecf/src/interfaces/morpho/utils/MarketParamsLib.sol)
+[Git Source](https://github.com/aegonmyy/meridian/blob/8f085e328b747676203173bc0d1ecf2a95d5e520/src/interfaces/morpho/utils/MarketParamsLib.sol)
 
 **Title:**
 MarketParamsLib

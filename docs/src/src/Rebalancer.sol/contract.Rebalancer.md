@@ -1,5 +1,5 @@
 # Rebalancer
-[Git Source](https://github.com/aegonmyy/meridian/blob/04fdcb3887d6bfe7076e798735b94bee541e7ecf/src/Rebalancer.sol)
+[Git Source](https://github.com/aegonmyy/meridian/blob/8f085e328b747676203173bc0d1ecf2a95d5e520/src/Rebalancer.sol)
 
 **Title:**
 Rebalancer
@@ -11,12 +11,11 @@ All capital movement flows through this contract. The agent (AgentConsumer) subm
 proposals; Rebalancer enforces on-chain guards before calling hub functions.
 Guards enforced in order:
 1. Access control — only owner or AgentConsumer
-2. Cooldown — minimum 24 hours between rebalances
-3. Allocation validity — sum, per-market cap, chain cap, dust floor
-4. APY threshold — optimal must beat current by >= 50 bps (proposeAllocation only)
-5. Chain whitelist — all selectors in proposal must be approved
-6. Protocol whitelist — all protocol ids must be approved
-7. Max single move — no allocation may exceed 30% of totalAssets
+2. Allocation validity — sum, per-market cap, chain cap, dust floor
+3. APY threshold — optimal must beat current by >= 50 bps (proposeAllocation only)
+4. Chain whitelist — all selectors in proposal must be approved
+5. Protocol whitelist — all protocol ids must be approved
+6. Max single move — no allocation may exceed 30% of totalAssets
 
 
 ## Constants
@@ -42,28 +41,6 @@ address public immutable AGENT_CONSUMER
 ```
 
 
-### COOLDOWN
-Minimum time between successive rebalance operations
-
-Prevents the agent from thrashing capital between protocols in rapid succession.
-
-
-```solidity
-uint256 public constant COOLDOWN = 24 hours
-```
-
-
-### MAX_SINGLE_MOVE_BPS
-Maximum allocation any single market may receive as a fraction of totalAssets
-
-Expressed in basis points — 3_000 = 30%. Enforced by validateSingleMove.
-
-
-```solidity
-uint256 public constant MAX_SINGLE_MOVE_BPS = 3_000
-```
-
-
 ## State Variables
 ### owner
 Contract owner — authorized to call all functions and manage whitelists
@@ -73,18 +50,6 @@ Mutable — can be transferred. Should be a multisig before mainnet.
 
 ```solidity
 address public owner
-```
-
-
-### lastRebalanceTimestamp
-Timestamp of the last successful rebalance or proposeAllocation execution
-
-Compared against block.timestamp to enforce COOLDOWN between operations.
-Shared between rebalance() and proposeAllocation() — either call resets it.
-
-
-```solidity
-uint256 public lastRebalanceTimestamp
 ```
 
 
@@ -154,11 +119,10 @@ constructor(address _hub, address _agentConsumer, address _owner) ;
 
 Executes an intra-spoke rebalance — moves capital between adapters on one chain
 
-Guards enforced in order: access control, cooldown, source != target,
+Guards enforced in order: access control, source != target,
 amount != 0, chain whitelisted, both protocols whitelisted.
 Does NOT validate APY gain — intra-spoke rebalances are manual operator decisions.
 Does NOT enforce max single move — amount is absolute not proportional to totalAssets.
-Updates lastRebalanceTimestamp on success — shared cooldown with proposeAllocation.
 Calls hub.rebalance() which sends a REBALANCE CCIP message to the target spoke.
 
 
@@ -177,19 +141,46 @@ function rebalance(bytes32 _source, bytes32 _target, uint256 _amount, uint64 _ch
 |`_chainSelector`|`uint64`|CCIP chain selector of the spoke where both adapters live|
 
 
+### recallFromSpoke
+
+Recalls capital off an overweight spoke back to hub idle — the "move weight
+off a chain" lever that proposeAllocation alone cannot provide
+
+WI-3 (Issue 5, Option A). Guards: access control, chain whitelisted, amount != 0.
+No pendingWithdrawal is created — the hub just credits the arrived tokens as
+ordinary idle and emits RecallCompleted once the CONFIRM_WITHDRAWAL lands.
+Intended v1 operator flow (on-chain diff engine is explicitly out of scope, v2):
+1. Off-chain agent computes the desired allocation diff.
+2. For each overweight chain, call recallFromSpoke(selector, amount) to pull
+capital back to hub idle.
+3. Await the hub's RecallCompleted event confirming the funds landed.
+4. Call proposeAllocation() sized against the now-larger idle balance —
+HUB.sendToSpoke's solvency guard (and this contract's own pre-check) will
+reject a proposal sized before the recall actually lands.
+
+
+```solidity
+function recallFromSpoke(uint64 _chainSelector, uint256 _amount) external onlyAuthorized;
+```
+**Parameters**
+
+|Name|Type|Description|
+|----|----|-----------|
+|`_chainSelector`|`uint64`|CCIP chain selector of the spoke to recall from — must be whitelisted|
+|`_amount`|`uint256`|USDC amount to recall — must be nonzero|
+
+
 ### proposeAllocation
 
 Validates and executes a full cross-chain allocation proposal from the agent
 
-Seven guards enforced in order — any failure reverts without side effects:
+Five guards enforced in order — any failure reverts without side effects:
 1. onlyAuthorized — owner or AgentConsumer only
-2. CooldownNotElapsed — 24 hours since last rebalance
-3. InvalidAllocation — validateAllocation(proposedAllocations) must pass
-4. BelowThreshold — optimal weighted APY must exceed current by >= 50 bps
-5. ChainNotWhitelisted — all chainSelectors in proposal must be approved
-6. ProtocolNotWhitelisted — all protocolIds in proposal must be approved
-7. MaxSingleMoveExceeded — no allocation > 30% of hub.totalAssets()
-On success: updates lastRebalanceTimestamp then calls hub.sendToSpoke() per chain.
+2. InvalidAllocation — validateAllocation(proposedAllocations) must pass
+3. BelowThreshold — optimal weighted APY must exceed current by >= 50 bps
+4. ChainNotWhitelisted — all chainSelectors in proposal must be approved
+5. ProtocolNotWhitelisted — all protocolIds in proposal must be approved
+On success: calls hub.sendToSpoke() per chain.
 Known limitation: proposedAllocations amounts are in bps but sendToSpoke expects
 absolute USDC amounts — the TODO comment in code flags this conversion gap.
 
@@ -406,14 +397,6 @@ Thrown when rebalance amount is zero
 error ZeroAmount();
 ```
 
-### CooldownNotElapsed
-Thrown when less than COOLDOWN has elapsed since last rebalance
-
-
-```solidity
-error CooldownNotElapsed();
-```
-
 ### BelowThreshold
 Thrown when optimal weighted APY does not exceed current by >= 50 bps
 
@@ -423,8 +406,6 @@ error BelowThreshold();
 ```
 
 ### MaxSingleMoveExceeded
-Thrown when a single allocation exceeds MAX_SINGLE_MOVE_BPS of totalAssets
-
 
 ```solidity
 error MaxSingleMoveExceeded();
@@ -454,5 +435,18 @@ Covers: sum != 10000, market > 6000 bps, chain > 8000 bps, dust < 500 bps
 
 ```solidity
 error InvalidAllocation();
+```
+
+### InsufficientIdleForProposal
+Thrown when a proposal's total requested amount exceeds hub's unreserved idle
+
+WI-3 friendly pre-check — fails legibly before dispatching any per-chain sends,
+instead of a partial dispatch dying deep inside a later chain's CCIP token
+transfer. Mirrors (and is intentionally more conservative than racing with)
+the authoritative guard enforced in HUB.sendToSpoke itself.
+
+
+```solidity
+error InsufficientIdleForProposal(uint256 requested, uint256 available);
 ```
 

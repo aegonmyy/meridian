@@ -86,6 +86,22 @@ contract HubVaultInvariant is Test {
         );
     }
 
+    /// @dev WI-4 global invariant 2 — reservedAssets == sum of every live pending
+    ///      withdrawal's reservedIdle. "Live" means pendingWithdrawals[id].shares > 0 —
+    ///      settled or cancelled entries are deleted and correctly excluded.
+    function invariant_reservedAssetsEqualsSumOfPendingReservedIdle()
+        public
+        view
+    {
+        assertEq(hub.reservedAssets(), _sumLivePendingReservedIdle());
+    }
+
+    /// @dev WI-4 global invariant 2 (second half) — hub's own escrowed share balance
+    ///      equals the sum of every live pending withdrawal's shares.
+    function invariant_hubShareBalanceEqualsSumOfPendingShares() public view {
+        assertEq(hub.balanceOf(address(hub)), _sumLivePendingShares());
+    }
+
     // @dev totalAssets never less than what users deposited minus withdrawn
     // yield can only add so totalAssets >= net deposits
     function invariant_totalAssetsGeNetDeposits() public view {
@@ -107,6 +123,22 @@ contract HubVaultInvariant is Test {
     /// @dev inTransitAmount entries never exceed totalAssets
     function invariant_inTransitAssetsBounded() public view {
         assertLe(hub.inTransitAssets(), hub.totalAssets());
+    }
+
+    /// @dev WI-4 global invariant 3 — inTransitAssets == sum(inTransitAmount[*]), now
+    ///      provable since WI-1 removed id collisions (a collision could previously silently
+    ///      overwrite one leg's tracked amount, permanently desyncing the two). The
+    ///      CCIPLocalSimulator delivers every message synchronously within the same call
+    ///      that sends it, so every DEPOSIT's CONFIRM_RECEIPT (and thus its inTransitAmount
+    ///      decrement) has already landed by the time any invariant is checked between
+    ///      handler calls — inTransitAssets is therefore always fully reconciled to 0
+    ///      in this harness. A nonzero value here would mean a leg's amount was tracked but
+    ///      never released, exactly the desync this invariant guards against.
+    function invariant_inTransitAssetsFullyReconciledBetweenCalls()
+        public
+        view
+    {
+        assertEq(hub.inTransitAssets(), 0);
     }
 
     /// @dev inTransitAssets never exceeds totalAssets
@@ -223,9 +255,12 @@ contract HubVaultInvariant is Test {
         }
     }
 
-    /// @dev sum of all depositor balances equals totalSupply
+    /// @dev sum of all depositor balances plus hub's own escrowed balance equals totalSupply
+    /// @dev WI-4: shares are transferred to the hub (escrowed, not burned) while a
+    ///      withdrawal is pending — hub.balanceOf(address(hub)) must be included or this
+    ///      invariant would spuriously fail whenever a Path 2/3 withdrawal is in flight.
     function invariant_sumOfSharesEqualsTotalSupply() public view {
-        uint256 totalShares;
+        uint256 totalShares = hub.balanceOf(address(hub));
         for (uint256 i = 0; i < 3; i++) {
             address depositor = handler.depositors(i);
             totalShares += hub.balanceOf(depositor);
@@ -238,6 +273,29 @@ contract HubVaultInvariant is Test {
         for (uint256 i = 0; i < length; i++) {
             uint64 selector = hub.spokeChainSelectors(i);
             total += hub.spokeBalances(selector);
+        }
+    }
+
+    /// @dev Sums reservedIdle across every pending withdrawal id the handler has ever
+    ///      issued, counting only entries still live (shares > 0 — not yet settled/cancelled).
+    function _sumLivePendingReservedIdle() internal view returns (uint256 total) {
+        uint256 length = handler.pendingWithdrawalIdsLength();
+        for (uint256 i = 0; i < length; i++) {
+            bytes32 id = handler.ghostPendingWithdrawalIds(i);
+            (uint256 shares, , uint256 reservedIdle, , , , , ) = hub
+                .pendingWithdrawals(id);
+            if (shares > 0) total += reservedIdle;
+        }
+    }
+
+    /// @dev Sums shares across every pending withdrawal id the handler has ever issued,
+    ///      counting only entries still live (shares > 0).
+    function _sumLivePendingShares() internal view returns (uint256 total) {
+        uint256 length = handler.pendingWithdrawalIdsLength();
+        for (uint256 i = 0; i < length; i++) {
+            bytes32 id = handler.ghostPendingWithdrawalIds(i);
+            (uint256 shares, , , , , , , ) = hub.pendingWithdrawals(id);
+            if (shares > 0) total += shares;
         }
     }
 }

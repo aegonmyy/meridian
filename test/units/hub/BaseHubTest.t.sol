@@ -3,6 +3,7 @@ pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {CCIPLocalSimulator, IRouterClient, LinkToken} from "chainlink-local/ccip/CCIPLocalSimulator.sol";
+import {Client} from "@chainlink+/ccip/libraries/Client.sol";
 import {HUB} from "../../../src/Hub.sol";
 import {SpokeVault} from "../../../src/Spoke.sol";
 import {Asset} from "../../mocks/Asset.sol";
@@ -112,6 +113,8 @@ abstract contract BaseHubTest is Test {
         hub._requestAllBalanceReports(messageId);
     }
 
+    // Slot constants below verified via `forge inspect src/Hub.sol:HUB storage-layout` —
+    // re-run and update whenever Hub.sol's state variable declarations change.
     function _setSpokeBalance(uint64 selector, uint256 amount) internal {
         bytes32 slot = keccak256(abi.encode(uint256(selector), uint256(11)));
         vm.store(address(hub), slot, bytes32(amount));
@@ -153,9 +156,29 @@ abstract contract BaseHubTest is Test {
     }
 
     function _setupPath3() internal {
+        // WI-4: RECALL_HAIRCUT_BPS (50 bps) caps each Path 3 leg at 99.5% of the spoke's
+        // reported balance, as a stale-balance safety margin. A single-spoke withdrawal
+        // whose shortfall equals exactly 100% of that spoke's balance is therefore
+        // structurally uncoverable — by design (see WithdrawPath3Test's dedicated
+        // InsufficientRecallLiquidity tests). To let alice's FULL redemption still settle
+        // successfully in these plumbing tests, _addPath3Headroom() adds a small second
+        // depositor first so alice's claim is a bit less than 100% of the vault, leaving
+        // genuine spare capacity in the spoke beyond the haircut margin.
+        _addPath3Headroom();
         // send 9_000 of alice's 10_000 to spoke — only 1_000 idle remains
         // alice's shares worth 10_000 — idle (1_000) insufficient — Path 3
         _sendToSpoke(9_000e6);
+    }
+
+    /// @dev Adds a small second depositor so a full redemption of alice's original stake
+    /// does not require exactly 100% of a single spoke's balance — see _setupPath3().
+    function _addPath3Headroom() internal {
+        address headroomDepositor = makeAddr("headroomDepositor");
+        usdc.mint(headroomDepositor, 500e6);
+        vm.startPrank(headroomDepositor);
+        usdc.approve(address(hub), 500e6);
+        hub.deposit(500e6, headroomDepositor);
+        vm.stopPrank();
     }
 
     function _deployCompoundAdapter()
@@ -166,5 +189,76 @@ abstract contract BaseHubTest is Test {
         COMPOUND = keccak256("COMPOUND");
         vm.prank(owner);
         spoke.setAdapter(COMPOUND, address(compoundAdapter));
+    }
+
+    // =========================================================================
+    // Shared CCIP delivery helpers (FX-4)
+    // =========================================================================
+    // Bypass the router's auto-delivery and call HUB.ccipReceive directly (pranked as the
+    // router — exactly what CCIPReceiver's onlyRouter modifier permits) with hand-built
+    // Any2EVMMessage payloads. Used wherever a test needs precise control over delivery
+    // timing/order/content that CCIPLocalSimulator's synchronous auto-routing can't provide
+    // (e.g. WI6_OutOfOrderDeliveryTest's reordering test, WI5's late-confirm-after-reconcile
+    // test). Extracted here per FX-4 so it isn't duplicated per test file.
+
+    function _deliverConfirmWithdrawal(
+        bytes32 messageId,
+        uint256 reportedSpokeBalance,
+        uint256 tokenAmount
+    ) internal {
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](0);
+        CCIPHelpers.CcipMessage memory payload = CCIPHelpers.CcipMessage({
+            messageType: CCIPHelpers.MessageType.CONFIRM_WITHDRAWAL,
+            instructions: instructions,
+            spokeBalance: reportedSpokeBalance,
+            reportTimestamp: block.timestamp,
+            messageId: messageId
+        });
+
+        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
+        tokenAmounts[0] = Client.EVMTokenAmount({
+            token: address(usdc),
+            amount: tokenAmount
+        });
+
+        Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
+            messageId: keccak256(abi.encode("ccip", messageId)),
+            sourceChainSelector: chainSelector,
+            sender: abi.encode(address(spoke)),
+            data: CCIPHelpers.encode(payload),
+            destTokenAmounts: tokenAmounts
+        });
+
+        vm.prank(address(router));
+        hub.ccipReceive(message);
+    }
+
+    function _deliverConfirmReceipt(
+        bytes32 messageId,
+        uint256 reportedSpokeBalance
+    ) internal {
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](0);
+        CCIPHelpers.CcipMessage memory payload = CCIPHelpers.CcipMessage({
+            messageType: CCIPHelpers.MessageType.CONFIRM_RECEIPT,
+            instructions: instructions,
+            spokeBalance: reportedSpokeBalance,
+            reportTimestamp: block.timestamp,
+            messageId: messageId
+        });
+
+        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](0);
+
+        Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
+            messageId: keccak256(abi.encode("ccip", messageId)),
+            sourceChainSelector: chainSelector,
+            sender: abi.encode(address(spoke)),
+            data: CCIPHelpers.encode(payload),
+            destTokenAmounts: tokenAmounts
+        });
+
+        vm.prank(address(router));
+        hub.ccipReceive(message);
     }
 }

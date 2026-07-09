@@ -26,9 +26,8 @@ contract RebalanceTest is BaseHubTest {
             targetAdapter: COMPOUND,
             targetAmount: 0
         });
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
 
         assertEq(aaveAdapter.totalAssets(), 3_000e6);
     }
@@ -46,9 +45,8 @@ contract RebalanceTest is BaseHubTest {
             targetAdapter: COMPOUND,
             targetAmount: 0
         });
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
 
         assertEq(compoundAdapter.totalAssets(), 2_000e6);
     }
@@ -67,9 +65,8 @@ contract RebalanceTest is BaseHubTest {
             targetAdapter: COMPOUND,
             targetAmount: 0
         });
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
 
         assertEq(hub.spokeBalances(chainSelector), spokeBalanceBefore);
     }
@@ -87,9 +84,8 @@ contract RebalanceTest is BaseHubTest {
             targetAdapter: COMPOUND,
             targetAmount: 0
         });
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
 
         assertGt(hub.lastReportTimestamp(chainSelector), 0);
         assertEq(hub.spokeBalances(chainSelector), 5_000e6);
@@ -109,9 +105,8 @@ contract RebalanceTest is BaseHubTest {
             targetAdapter: COMPOUND,
             targetAmount: 0
         });
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
 
         assertEq(hub.totalAssets(), totalBefore);
     }
@@ -130,9 +125,8 @@ contract RebalanceTest is BaseHubTest {
             targetAdapter: COMPOUND,
             targetAmount: 0
         });
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
 
         assertEq(usdc.balanceOf(address(hub)), hubUSDCBefore);
     }
@@ -151,9 +145,8 @@ contract RebalanceTest is BaseHubTest {
             targetAdapter: COMPOUND,
             targetAmount: 0
         });
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
 
         assertEq(hub.inTransitAssets(), 0);
     }
@@ -172,9 +165,8 @@ contract RebalanceTest is BaseHubTest {
             targetAdapter: COMPOUND,
             targetAmount: 0
         });
-        bytes32 messageId = keccak256(abi.encode(block.timestamp));
         vm.prank(rebalancer);
-        hub.rebalance(chainSelector, instructions, messageId);
+        hub.rebalance(chainSelector, instructions);
 
         assertEq(usdc.balanceOf(address(hub)), hubUSDCBefore);
     }
@@ -191,7 +183,7 @@ contract RebalanceTest is BaseHubTest {
 
         vm.prank(alice);
         vm.expectRevert(NotRebalancer.selector);
-        hub.rebalance(chainSelector, instructions, bytes32(0));
+        hub.rebalance(chainSelector, instructions);
     }
 
     function test_rebalance_revert_spokeNotFound() public {
@@ -206,7 +198,7 @@ contract RebalanceTest is BaseHubTest {
 
         vm.prank(rebalancer);
         vm.expectRevert(SpokeNotFound.selector);
-        hub.rebalance(9999, instructions, bytes32(0));
+        hub.rebalance(9999, instructions);
     }
 
     function test_rebalance_revert_removedSpoke() public {
@@ -224,6 +216,6 @@ contract RebalanceTest is BaseHubTest {
 
         vm.prank(rebalancer);
         vm.expectRevert(SpokeNotFound.selector);
-        hub.rebalance(chainSelector, instructions, bytes32(0));
+        hub.rebalance(chainSelector, instructions);
     }
 }

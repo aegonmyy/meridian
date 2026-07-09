@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.33;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {HUB} from "../../../../src/Hub.sol";
 import {Asset} from "../../../mocks/Asset.sol";
 import {SpokeVault} from "../../../../src/Spoke.sol";
@@ -35,6 +35,15 @@ contract HubVaultHandler is Test {
     uint256 public ghostTotalWithdrawn;
     uint256 public ghostTotalSentToSpokes;
     uint256 public ghostTotalRecalledFromSpokes;
+
+    /// @dev WI-4 — every withdrawal id that has ever been queued (Path 2 or Path 3). The
+    /// hub exposes no enumeration of pendingWithdrawals, so the handler must capture ids
+    /// itself from the WithdrawalQueued event as they're issued. Entries whose
+    /// pendingWithdrawals[id].shares has since gone to 0 are settled/cancelled — the
+    /// invariants filter on that, not on removing entries from this array.
+    bytes32[] public ghostPendingWithdrawalIds;
+    bytes32 constant WITHDRAWAL_QUEUED_SIG =
+        keccak256("WithdrawalQueued(address,bytes32,uint256,uint256,uint256)");
 
     //uint256 public ghost_pendingWithdrawalsCount;
 
@@ -102,6 +111,15 @@ contract HubVaultHandler is Test {
 
         bool wasRegistered = isRegistered[selector];
 
+        // Repointing an ALREADY-registered selector to a codeless address is a realistic
+        // owner misconfiguration, but it silently blackholes any in-flight or future
+        // message to that selector (no contract there to ever send a confirm back) —
+        // permanently desyncing inTransitAssets in a way no amount of correct hub-side
+        // accounting can prevent. That failure mode belongs to addSpoke's own operational
+        // safety (out of scope for the WI-4 invariants this handler feeds), so skip it here
+        // the same way removeSpoke is already guarded against funded-spoke corruption.
+        if (wasRegistered && _spoke.code.length == 0) return;
+
         vm.prank(owner);
         hub.addSpoke(selector, _spoke);
 
@@ -123,10 +141,13 @@ contract HubVaultHandler is Test {
         (, bool exists, ) = hub.spokes(selector);
         if (!exists) return;
 
+        // WI-6 added an on-chain guard (spokeBalances[selector] == 0 and no in-flight legs)
+        // — wrapped in try/catch so the fuzzer also exercises the revert path for a funded
+        // or in-flight spoke, not just the success path.
         vm.prank(owner);
-        hub.removeSpoke(selector);
-
-        ghostCurrentSpoke[selector] = address(0);
+        try hub.removeSpoke(selector) {
+            ghostCurrentSpoke[selector] = address(0);
+        } catch {}
     }
 
     function sendToSpoke(uint256 protocolSeed, uint256 amount) public {
@@ -153,9 +174,12 @@ contract HubVaultHandler is Test {
     }
 
     function recallFromSpoke(uint256 amount) public {
-        // only recall if spoke has balance
+        // only recall if spoke has a non-dust balance — bound(1e6, spokeBalance) panics
+        // (max < min) once repeated partial recalls leave sub-1e6 dust behind, which is a
+        // reachable state regardless of WI-1/WI-2 (spokeBalance decreases by exact recalled
+        // amounts, and can land below 1e6 after several cycles).
         uint256 spokeBalance = hub.spokeBalances(chainSelector);
-        if (spokeBalance == 0) return;
+        if (spokeBalance < 1e6) return;
 
         amount = bound(amount, 1e6, spokeBalance);
 
@@ -183,6 +207,63 @@ contract HubVaultHandler is Test {
         } catch {}
     }
 
+    /// @notice WI-4 — a random depositor redeems a random fraction of their shares
+    /// @dev May settle synchronously (Path 1/2 in this synchronous harness) or, if the
+    ///      spoke's reported balance can't cover the haircut-capped shortfall, revert with
+    ///      InsufficientRecallLiquidity — wrapped in try/catch since that is expected,
+    ///      fail-closed behavior, not a bug. Captures the issued withdrawal id (if any) from
+    ///      the WithdrawalQueued event so the invariants below can sum over real entries.
+    function redeemShares(uint256 actorSeed, uint256 fractionBps) public {
+        address actor = depositors[actorSeed % depositors.length];
+        uint256 shares = hub.balanceOf(actor);
+        if (shares == 0) return;
+        fractionBps = bound(fractionBps, 1, 10_000);
+        uint256 redeemAmount = (shares * fractionBps) / 10_000;
+        if (redeemAmount == 0) return;
+
+        vm.recordLogs();
+        vm.prank(actor);
+        try hub.redeem(redeemAmount, actor, actor) {
+            bytes32 id = _lastWithdrawalQueuedId();
+            if (id != bytes32(0)) {
+                ghostPendingWithdrawalIds.push(id);
+            }
+        } catch {}
+    }
+
+    /// @notice WI-4 — settle/cancel maintenance calls so pending entries don't only ever grow
+    function attemptSettlement(uint256 idSeed) public {
+        if (ghostPendingWithdrawalIds.length == 0) return;
+        bytes32 id = ghostPendingWithdrawalIds[
+            idSeed % ghostPendingWithdrawalIds.length
+        ];
+        try hub.attemptSettlement(id) {} catch {}
+    }
+
+    function cancelWithdrawal(uint256 idSeed) public {
+        if (ghostPendingWithdrawalIds.length == 0) return;
+        bytes32 id = ghostPendingWithdrawalIds[
+            idSeed % ghostPendingWithdrawalIds.length
+        ];
+        (, , , , , uint64 requestedAt, , address entryOwner) = hub
+            .pendingWithdrawals(id);
+        if (entryOwner == address(0)) return;
+        vm.warp(block.timestamp + hub.WITHDRAWAL_TIMEOUT() + 1);
+        vm.prank(entryOwner);
+        try hub.cancelWithdrawal(id) {} catch {}
+        requestedAt; // silence unused-var warning
+    }
+
+    function _lastWithdrawalQueuedId() internal returns (bytes32) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = logs.length; i > 0; i--) {
+            if (logs[i - 1].topics[0] == WITHDRAWAL_QUEUED_SIG) {
+                return logs[i - 1].topics[2];
+            }
+        }
+        return bytes32(0);
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================
@@ -193,5 +274,9 @@ contract HubVaultHandler is Test {
 
     function registeredSelectorsLength() external view returns (uint256) {
         return registeredSelectors.length;
+    }
+
+    function pendingWithdrawalIdsLength() external view returns (uint256) {
+        return ghostPendingWithdrawalIds.length;
     }
 }

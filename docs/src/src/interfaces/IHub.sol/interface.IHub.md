@@ -1,5 +1,5 @@
 # IHub
-[Git Source](https://github.com/aegonmyy/meridian/blob/04fdcb3887d6bfe7076e798735b94bee541e7ecf/src/interfaces/IHub.sol)
+[Git Source](https://github.com/aegonmyy/meridian/blob/8f085e328b747676203173bc0d1ecf2a95d5e520/src/interfaces/IHub.sol)
 
 
 ## Functions
@@ -35,6 +35,15 @@ function recallFromSpoke(
 ) external;
 ```
 
+### recallFromSpoke
+
+Rebalancer-driven recall — hub derives its own id, no pendingWithdrawal is created
+
+
+```solidity
+function recallFromSpoke(uint64 _chainSelector, uint256 _amount) external;
+```
+
 ### totalAssets
 
 
@@ -42,14 +51,24 @@ function recallFromSpoke(
 function totalAssets() external view returns (uint256);
 ```
 
+### idleBalance
+
+
+```solidity
+function idleBalance() external view returns (uint256);
+```
+
+### reservedAssets
+
+
+```solidity
+function reservedAssets() external view returns (uint256);
+```
+
 ### rebalance
 
 
 ```solidity
-function rebalance(
-    uint64 _chainSelector,
-    CCIPHelpers.AdapterInstructions[] memory _instructions,
-    bytes32 _messageId
-) external;
+function rebalance(uint64 _chainSelector, CCIPHelpers.AdapterInstructions[] memory _instructions) external;
 ```
 

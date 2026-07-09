@@ -74,6 +74,13 @@ contract Rebalancer {
     /// @dev Covers: sum != 10000, market > 6000 bps, chain > 8000 bps, dust < 500 bps
     error InvalidAllocation();
 
+    /// @notice Thrown when a proposal's total requested amount exceeds hub's unreserved idle
+    /// @dev WI-3 friendly pre-check — fails legibly before dispatching any per-chain sends,
+    ///      instead of a partial dispatch dying deep inside a later chain's CCIP token
+    ///      transfer. Mirrors (and is intentionally more conservative than racing with)
+    ///      the authoritative guard enforced in HUB.sendToSpoke itself.
+    error InsufficientIdleForProposal(uint256 requested, uint256 available);
+
     // =========================================================================
     // Events
     // =========================================================================
@@ -176,8 +183,34 @@ contract Rebalancer {
             targetAdapter: _target,
             targetAmount: 0
         });
-        bytes32 _messageId = keccak256(abi.encode(_target, block.timestamp));
-        HUB.rebalance(_chainSelector, _instructions, _messageId);
+        // Message id is derived inside the hub via its nonce'd _newMessageId helper
+        // (WI-1) — the rebalancer no longer derives collision-prone content ids.
+        HUB.rebalance(_chainSelector, _instructions);
+    }
+
+    /// @notice Recalls capital off an overweight spoke back to hub idle — the "move weight
+    ///         off a chain" lever that proposeAllocation alone cannot provide
+    /// @dev WI-3 (Issue 5, Option A). Guards: access control, chain whitelisted, amount != 0.
+    ///      No pendingWithdrawal is created — the hub just credits the arrived tokens as
+    ///      ordinary idle and emits RecallCompleted once the CONFIRM_WITHDRAWAL lands.
+    ///
+    ///      Intended v1 operator flow (on-chain diff engine is explicitly out of scope, v2):
+    ///        1. Off-chain agent computes the desired allocation diff.
+    ///        2. For each overweight chain, call recallFromSpoke(selector, amount) to pull
+    ///           capital back to hub idle.
+    ///        3. Await the hub's RecallCompleted event confirming the funds landed.
+    ///        4. Call proposeAllocation() sized against the now-larger idle balance —
+    ///           HUB.sendToSpoke's solvency guard (and this contract's own pre-check) will
+    ///           reject a proposal sized before the recall actually lands.
+    /// @param _chainSelector CCIP chain selector of the spoke to recall from — must be whitelisted
+    /// @param _amount USDC amount to recall — must be nonzero
+    function recallFromSpoke(
+        uint64 _chainSelector,
+        uint256 _amount
+    ) external onlyAuthorized {
+        if (_amount == 0) revert ZeroAmount();
+        if (!whitelistedChains[_chainSelector]) revert ChainNotWhitelisted();
+        HUB.recallFromSpoke(_chainSelector, _amount);
     }
 
     /// @notice Validates and executes a full cross-chain allocation proposal from the agent
@@ -226,6 +259,27 @@ contract Rebalancer {
         }
 
         uint256 totalAssets = HUB.totalAssets();
+
+        // WI-3: friendly pre-check — proposeAllocation sizes sends against totalAssets()
+        // but every send is actually paid out of unreserved idle. Without this check, a
+        // proposal valid on paper (allocations sum to 10000 bps) can die deep inside a
+        // later chain's CCIP token transfer after earlier chains' sends already landed —
+        // a partial, confusing failure. This computes the same total the dispatch loop
+        // below will request and fails atomically before any message is sent.
+        uint256 totalRequested;
+        for (uint256 i = 0; i < proposal.protocolIds.length; i++) {
+            for (uint256 j = 0; j < proposal.protocolIds[i].length; j++) {
+                totalRequested +=
+                    (proposal.proposedAllocations[i][j] * totalAssets) /
+                    10_000;
+            }
+        }
+        uint256 idle = HUB.idleBalance();
+        uint256 reserved = HUB.reservedAssets();
+        uint256 available = idle > reserved ? idle - reserved : 0;
+        if (totalRequested > available) {
+            revert InsufficientIdleForProposal(totalRequested, available);
+        }
 
         for (uint256 i = 0; i < proposal.protocolIds.length; i++) {
             CCIPHelpers.AdapterInstructions[]

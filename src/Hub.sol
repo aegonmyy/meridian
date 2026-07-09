@@ -871,30 +871,42 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
         uint256 shortfall = assets - idleFree;
         uint64[] memory order = _spokesByDescendingBalance();
         uint256 remaining = shortfall;
+        uint32 legCount;
         for (uint256 i = 0; i < order.length && remaining > 0; i++) {
             uint256 cap = (spokeBalances[order[i]] * (10_000 - RECALL_HAIRCUT_BPS)) / 10_000;
             uint256 leg = remaining < cap ? remaining : cap;
+            if (leg > 0) legCount++;
             remaining -= leg;
         }
         if (remaining > 0) {
             revert InsufficientRecallLiquidity(shortfall, shortfall - remaining);
         }
 
-        // Fully coverable — commit and dispatch.
+        // Fully coverable — commit BEFORE dispatch, including the final leg count.
+        // FX-7: pendingLegs is written HERE, before any leg is dispatched — not after the
+        // loop. A leg's confirm can arrive synchronously WHILE this loop is still running
+        // for later legs (this test harness; production CCIP always resolves dispatch and
+        // confirm-arrival in separate transactions, so this can't happen there). If
+        // pendingLegs were still 0 at that moment, the arriving leg's decrement guard
+        // (`if (pendingLegs > 0) pendingLegs -= 1`) would silently no-op, and the later
+        // post-loop write would stomp pendingLegs back to the full original legCount —
+        // permanently overcounting outstanding legs by one per mid-loop arrival, which can
+        // never fully reach 0 again once the truly-last leg lands, permanently blocking
+        // FX-1's Path 3 settlement gate. Writing here first makes this harness's behavior
+        // faithful to production ordering.
         reservedAssets += idleFree;
         pendingWithdrawals[_messageId] = PendingWithdrawal({
             shares: shares,
             quotedAssets: assets,
             reservedIdle: idleFree,
             arrivedAssets: 0,
-            pendingLegs: 0,
+            pendingLegs: legCount,
             requestedAt: uint64(block.timestamp),
             receiver: receiver,
             owner: owner
         });
 
         remaining = shortfall;
-        uint32 legCount;
         for (uint256 i = 0; i < order.length && remaining > 0; i++) {
             uint64 selector = order[i];
             uint256 cap = (spokeBalances[selector] * (10_000 - RECALL_HAIRCUT_BPS)) / 10_000;
@@ -902,7 +914,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
             if (leg == 0) continue;
             bytes32 legId = _newMessageId(bytes32(uint256(selector)));
             legToWithdrawal[legId] = _messageId;
-            legCount++;
             remaining -= leg;
             CCIPHelpers.AdapterInstructions[]
                 memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
@@ -914,7 +925,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
             });
             this.recallFromSpoke(selector, _instructions, legId);
         }
-        pendingWithdrawals[_messageId].pendingLegs = legCount;
         emit WithdrawalQueued(owner, _messageId, shares, assets, idleFree);
     }
 

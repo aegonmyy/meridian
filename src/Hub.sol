@@ -359,8 +359,11 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
     event QuarantinedReportRejected(uint64 indexed chainSelector, uint256 amount);
 
     /// @notice Emitted when a Path 3 recall leg or stray token arrival matches no live
-    ///         pendingWithdrawal — e.g. a leg for a withdrawal that already settled early
-    ///         (claim-time solvency let it pay out before all legs landed) or was cancelled
+    ///         pendingWithdrawal — e.g. a leg for a withdrawal that was cancelled, or (as of
+    ///         FX-1) a late leg for an id whose entry has already been deleted for any other
+    ///         reason. Since FX-1, settlement never happens before all of an entry's legs
+    ///         have landed (`pendingLegs == 0`), so a live entry can no longer be settled out
+    ///         from under a still-outstanding leg.
     /// @dev Funds become ordinary hub idle — no action needed, this is informational.
     /// @param chainSelector Chain selector the arrival came from
     /// @param amount Actual USDC amount that arrived
@@ -761,7 +764,9 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
     ///        across every active spoke, the ENTIRE call reverts with
     ///        InsufficientRecallLiquidity — fail-closed, nothing locks, user keeps shares.
     ///        Only if fully coverable does the hub commit (reserve idle, create the pending
-    ///        entry) and dispatch legs.
+    ///        entry) and dispatch legs. Settlement itself only happens once ALL of this
+    ///        entry's legs have landed (pendingLegs == 0) — see _attemptSettleWithdrawal's
+    ///        FX-1 NatSpec for why early settlement out of free idle was removed.
     ///      CLAIM-TIME PRICING (user-facing behavioral change from v1): for Path 2/3, the
     ///      amount actually paid out is previewRedeem(shares) recomputed AT SETTLEMENT, not
     ///      the quote taken here. Yield accrued while pending is credited to the withdrawer;
@@ -903,8 +908,25 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
         _attemptSettleWithdrawal(id);
     }
 
-    /// @notice Core non-reverting settlement attempt — claim-time pricing, solvency-gated
-    /// @dev CLAIM-TIME PRICING: payout is previewRedeem(shares) recomputed NOW, not the quote
+    /// @notice Core non-reverting settlement attempt — claim-time pricing, freshness/leg
+    ///         gated, solvency-gated
+    /// @dev FX-1: gating moved INSIDE this function so it holds for every caller, including
+    ///      the permissionless external `attemptSettlement`. Previously the freshness/arrival
+    ///      gates existed only at the CCIP callback call sites — anyone could call
+    ///      `attemptSettlement(id)` directly the instant a Path 2 withdrawal was queued and
+    ///      settle at the still-stale price, reopening the exact bug this engine fixed.
+    ///      Classification is derived purely from stored state (no separate "which path"
+    ///      flag needed): an entry with `pendingLegs > 0 || arrivedAssets > 0` was routed
+    ///      through Path 3 (it has, or is expecting, recall legs); otherwise it's a pure
+    ///      Path 2 entry.
+    ///      - Pure Path 2: defer unless `_allSpokesFresh()` — settlement must use a fully
+    ///        refreshed balance picture, not whatever was stale at request time.
+    ///      - Path 3: defer unless `pendingLegs == 0` — DECIDED POLICY (see FX-1 escalation):
+    ///        no early settlement out of free idle while legs are still outstanding. A
+    ///        user's own recalled liquidity is no longer a commons another withdrawer can
+    ///        claim first via idle, and settlement timing becomes predictable — once all of
+    ///        THIS entry's legs have landed, not whenever idle happens to be sufficient.
+    ///      CLAIM-TIME PRICING: payout is previewRedeem(shares) recomputed NOW, not the quote
     ///      taken at request time. quotedAssets is reference/sizing only, never a promise —
     ///      this is the decided v2 semantic (yield during flight settles from free idle by
     ///      design; a loss during flight reduces payout).
@@ -919,6 +941,18 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
         if (entry.shares == 0) return; // unknown / already settled / cancelled
 
         uint256 payout = previewRedeem(entry.shares);
+
+        bool isPathThreeEntry = entry.pendingLegs > 0 || entry.arrivedAssets > 0;
+        if (isPathThreeEntry) {
+            if (entry.pendingLegs > 0) {
+                emit SettlementDeferred(id, payout, 0);
+                return;
+            }
+        } else if (!_allSpokesFresh()) {
+            emit SettlementDeferred(id, payout, 0);
+            return;
+        }
+
         uint256 idle = _idleBalance();
         uint256 reservedByOthers = reservedAssets - entry.reservedIdle;
         uint256 availableForThisEntry = idle > reservedByOthers
@@ -1322,8 +1356,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
 
     /// @notice Handles CONFIRM_WITHDRAWAL from spoke — funds arrived. Three cases:
     ///         (1) a live Path 3 recall leg — credit the arrival and attempt settlement;
-    ///         (2) an orphaned leg (withdrawal already settled early or cancelled) — funds
-    ///             become ordinary idle, informational event only;
+    ///         (2) an orphaned leg (withdrawal was cancelled, or its entry is otherwise gone)
+    ///             — funds become ordinary idle, informational event only;
     ///         (3) never a leg at all — a WI-3 Rebalancer-driven recall, funds become idle
     /// @dev Spoke sends this after pulling funds from adapters and transferring USDC back to
     ///      hub. actualAmount is read from destTokenAmounts (the CCIP token envelope) — the

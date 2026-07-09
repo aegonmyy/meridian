@@ -32,10 +32,13 @@ contract WI6_OutOfOrderDeliveryTest is BaseHubTest {
     /// (totalAssets == idle + inTransit + spokeBalances) must hold after each step.
     function test_wi6_recallConfirmBeforeDepositConfirm_accountingStaysConsistent() public {
         // Simulate the DEPOSIT having been sent: tokens left the hub, inTransitAssets
-        // tracks it under DEPOSIT_ID — mirrors exactly what HUB._sendToSpoke does.
+        // tracks it under DEPOSIT_ID — mirrors exactly what HUB._sendToSpoke does, including
+        // netSentToSpoke (WI-7's sanity-band baseline — without it the simulated confirms
+        // below would exceed the band and be quarantined instead of applied).
         uint256 depositAmount = 5_000e6;
         deal(address(usdc), address(hub), usdc.balanceOf(address(hub)) - depositAmount);
         _simulateInTransit(DEPOSIT_ID, depositAmount);
+        _setNetSentToSpoke(depositAmount);
 
         _assertAccountingIdentity("after simulated DEPOSIT send");
 
@@ -80,6 +83,13 @@ contract WI6_OutOfOrderDeliveryTest is BaseHubTest {
         );
         bytes32 amountSlot = keccak256(abi.encode(id, uint256(16)));
         vm.store(address(hub), amountSlot, bytes32(amount));
+    }
+
+    /// @dev netSentToSpoke is a mapping at slot 19 (verified via
+    /// `forge inspect src/Hub.sol:HUB storage-layout`) — WI-7's sanity-band baseline.
+    function _setNetSentToSpoke(uint256 amount) internal {
+        bytes32 slot = keccak256(abi.encode(uint256(chainSelector), uint256(19)));
+        vm.store(address(hub), slot, bytes32(amount));
     }
 
     function _deliverConfirmWithdrawal(

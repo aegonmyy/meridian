@@ -82,12 +82,18 @@ contract WI2_SpokeResilienceTest is BaseHubTest {
     /// @notice Pre-fix: _aggregatedSpokeBalance sums adapter totals only — a direct USDC
     /// transfer to the spoke (e.g. leftover idle from a partial deploy) is invisible to
     /// the hub's accounting. Post-fix: idle is first-class in the aggregate.
+    /// @dev The direct transfer is sized within WI-7's REPORT_DUST allowance so this test
+    /// exercises _aggregatedSpokeBalance in isolation without also tripping the (correct,
+    /// separately-tested in WI7_SpokeReportSanityTest) sanity-band quarantine for balance
+    /// unexplained by any tracked netSentToSpoke.
     function test_wi2_aggregatedSpokeBalance_countsDirectTransfer() public {
+        _sendToSpoke(5_000e6); // establishes netSentToSpoke[chainSelector] = 5_000e6
+
         // simulate idle sitting on spoke (e.g. from a prior deployIdle-eligible state)
-        usdc.mint(address(spoke), 1_234e6);
+        usdc.mint(address(spoke), 50e6);
 
         _triggerReportBalance();
 
-        assertEq(hub.spokeBalances(chainSelector), 1_234e6);
+        assertEq(hub.spokeBalances(chainSelector), 5_000e6 + 50e6);
     }
 }

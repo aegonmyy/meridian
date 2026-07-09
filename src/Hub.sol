@@ -10,7 +10,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal, InsufficientUnreservedIdle, InvalidRecallAmount, InsufficientRecallLiquidity, NoPendingWithdrawal, NotWithdrawalOwner, WithdrawalNotYetCancellable, NothingToReconcile, ReconcileTooEarly, SpokeNotDrained, SpokeHasInFlightLegs} from "./errors/hubErrors.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal, InsufficientUnreservedIdle, InvalidRecallAmount, InsufficientRecallLiquidity, NoPendingWithdrawal, NotWithdrawalOwner, WithdrawalNotYetCancellable, NothingToReconcile, ReconcileTooEarly, SpokeNotDrained, SpokeHasInFlightLegs, NoQuarantinedReport} from "./errors/hubErrors.sol";
 
 /// @title HubVault
 /// @notice ERC4626 vault on Ethereum — entry point for all user deposits and withdrawals.
@@ -24,7 +25,7 @@ import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke
 ///      Path 1 (sync): idle covers withdrawal and all spoke reports are fresh.
 ///      Path 2 (async): idle covers withdrawal but spoke reports are stale — refreshes first.
 ///      Path 3 (async): idle insufficient — recalls shortfall from best spoke via CCIP.
-contract HUB is ERC4626, CCIPReceiver, Ownable {
+contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
     using SafeERC20 for IERC20;
 
     // =========================================================================
@@ -180,6 +181,47 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     ///      (the spoke would still be mid-flight but no longer isValidSpoke).
     mapping(uint64 => uint256) public inTransitToSpoke;
 
+    /// @notice Net USDC ever sent to a spoke via DEPOSIT, minus actual USDC ever recalled back
+    /// @dev WI-7 — the baseline a spoke's self-reported balance is checked against.
+    ///      Incremented in _sendToSpoke for DEPOSIT messages; decremented by the ACTUAL
+    ///      arrived amount (destTokenAmounts, never the payload's claimed amount) on every
+    ///      CONFIRM_WITHDRAWAL arrival, consistent with WI-4. Clamped at 0 — a spoke cannot
+    ///      recall more than the hub believes it ever sent without that surplus itself being
+    ///      yield, which the upside band below is what actually polices.
+    mapping(uint64 => uint256) public netSentToSpoke;
+
+    /// @notice A quarantined self-reported balance awaiting owner review
+    /// @dev WI-7. Set when a report exceeds the upside-only sanity band; spokeBalances is
+    ///      left untouched (never clamped — clamping corrupts pricing in the other
+    ///      direction). Owner resolves via acceptQuarantinedReport or rejectQuarantinedReport.
+    mapping(uint64 => uint256) public quarantinedReports;
+
+    /// @notice Count of spokes currently holding a quarantined report
+    /// @dev Used to know when it is safe to unpause — resolving one quarantined spoke must
+    ///      not unpause the vault while another remains quarantined.
+    uint256 public activeQuarantineCount;
+
+    /// @notice Upside band width, in bps, a spoke's reported balance may exceed netSentToSpoke by
+    /// @dev WI-7 (Issue 7b, Option A). Under-reporting (losses) always passes — it deflates
+    ///      rather than inflates share price, which is the direction that's safe to trust.
+    // TUNE: default from the plan — Open Questions #1, not decided further here.
+    uint256 public constant MAX_YIELD_BPS = 2_000;
+
+    /// @notice Flat USDC dust allowance added on top of the MAX_YIELD_BPS band
+    /// @dev Absorbs rounding noise for small spokes where a percentage-only band would be
+    ///      too tight to be useful.
+    // TUNE: default from the plan — Open Questions #1, not decided further here.
+    uint256 public constant REPORT_DUST = 100e6;
+
+    /// @notice Bps drop between consecutive reports that triggers an informational event
+    /// @dev Not one of the plan's named tunable constants (WITHDRAWAL_TIMEOUT,
+    ///      RECALL_HAIRCUT_BPS, TRANSIT_RECONCILE_DELAY, MAX_YIELD_BPS, REPORT_DUST) — the
+    ///      plan asks for "an informational event when it drops >X% between reports" without
+    ///      specifying X. Judgment call, flagged for review: 500 bps (5%) as a reasonable
+    ///      default. Purely informational — never blocks or quarantines anything.
+    // TUNE: judgment call, not an explicit plan constant — escalate if this default is wrong.
+    uint256 public constant LOSS_ALERT_BPS = 500;
+
     /// @notice Gas limit supplied to the CCIP router for all outbound messages
     /// @dev Configurable by owner. Default 1_500_000 — covers the most expensive spoke
     ///      operations (deposit → adapter → CONFIRM_RECEIPT CCIP send).
@@ -289,6 +331,32 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @param messageId The reconciled leg's internal message id
     /// @param amount The exact amount released from inTransitAssets
     event TransitReconciled(bytes32 indexed messageId, uint256 amount);
+
+    /// @notice Emitted when a spoke's self-reported balance exceeds the upside-only sanity
+    ///         band and is quarantined instead of applied
+    /// @dev WI-7. spokeBalances[selector] is left untouched; deposits and withdrawals pause.
+    /// @param chainSelector The reporting spoke's chain selector
+    /// @param reported The rejected, quarantined value
+    /// @param ceiling The band ceiling it exceeded (netSentToSpoke-derived)
+    event SuspiciousSpokeReport(uint64 indexed chainSelector, uint256 reported, uint256 ceiling);
+
+    /// @notice Emitted when a spoke's reported balance drops sharply between reports
+    /// @dev Informational only — under-reporting always passes the band (it deflates share
+    ///      price, the safe direction) but a sharp drop is worth an operator's attention.
+    /// @param chainSelector The reporting spoke's chain selector
+    /// @param previous The previously recorded balance
+    /// @param reported The new, lower balance
+    event SpokeBalanceDropped(uint64 indexed chainSelector, uint256 previous, uint256 reported);
+
+    /// @notice Emitted when the owner accepts a quarantined report
+    /// @param chainSelector The spoke whose quarantined report was accepted
+    /// @param amount The value now applied to spokeBalances
+    event QuarantinedReportAccepted(uint64 indexed chainSelector, uint256 amount);
+
+    /// @notice Emitted when the owner rejects a quarantined report
+    /// @param chainSelector The spoke whose quarantined report was discarded
+    /// @param amount The discarded value
+    event QuarantinedReportRejected(uint64 indexed chainSelector, uint256 amount);
 
     /// @notice Emitted when a Path 3 recall leg or stray token arrival matches no live
     ///         pendingWithdrawal — e.g. a leg for a withdrawal that already settled early
@@ -663,6 +731,9 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @notice Overrides ERC4626._deposit — no additional logic needed beyond standard behaviour
     /// @dev totalPrincipal tracking was removed as it was dead state — totalAssets() via
     ///      totalManagedAssets() is the source of truth for share pricing.
+    ///      WI-7: whenNotPaused — user deposits pause while any spoke report is quarantined.
+    ///      (Whether capital-movement functions like sendToSpoke/recallFromSpoke should also
+    ///      be gated is Open Questions #4 — not decided here; only user entry/exit is paused.)
     /// @param caller Address initiating the deposit
     /// @param receiver Address receiving the minted shares
     /// @param assets Amount of USDC being deposited
@@ -672,7 +743,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         address receiver,
         uint256 assets,
         uint256 shares
-    ) internal override {
+    ) internal override whenNotPaused {
         super._deposit(caller, receiver, assets, shares);
     }
 
@@ -695,6 +766,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     ///      amount actually paid out is previewRedeem(shares) recomputed AT SETTLEMENT, not
     ///      the quote taken here. Yield accrued while pending is credited to the withdrawer;
     ///      a loss reported while pending reduces their payout. See _attemptSettleWithdrawal.
+    ///      WI-7: whenNotPaused — new withdrawal REQUESTS pause while any spoke report is
+    ///      quarantined. Settlement of ALREADY-pending withdrawals (attemptSettlement,
+    ///      cancelWithdrawal) is intentionally NOT gated — those must keep working during a
+    ///      pause so users with in-flight withdrawals aren't additionally stuck.
     /// @param caller Address initiating the withdrawal (may differ from owner if approved)
     /// @param receiver Address to receive the USDC
     /// @param owner Address whose shares are being redeemed
@@ -706,7 +781,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         address owner,
         uint256 assets,
         uint256 shares
-    ) internal override {
+    ) internal override whenNotPaused {
         if (caller != owner) {
             _spendAllowance(owner, caller, shares);
         }
@@ -998,6 +1073,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
             inTransitAmount[_message.messageId] = totalAmount;
             inTransitSince[_message.messageId] = block.timestamp;
             inTransitToSpoke[_chainSelector] += 1;
+            netSentToSpoke[_chainSelector] += totalAmount;
             IERC20(asset()).forceApprove(address(router), totalAmount);
         }
         LINK.forceApprove(address(router), fee);
@@ -1112,6 +1188,79 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         return true;
     }
 
+    /// @notice Applies (or quarantines) a spoke's self-reported balance — the single choke
+    ///         point every balance-carrying callback routes through
+    /// @dev WI-7 (Issue 7b, Option A). Upside-only sanity band: accept if
+    ///      `reported <= netSentToSpoke[selector] * (10000 + MAX_YIELD_BPS) / 10000 + REPORT_DUST`.
+    ///      Under-reporting always passes — it deflates share price, the safe direction —
+    ///      but a drop exceeding LOSS_ALERT_BPS since the last report emits an informational
+    ///      event. On breach: NEVER clamp (clamping corrupts pricing the other direction) —
+    ///      quarantine instead. spokeBalances is left untouched, the report is stored in
+    ///      quarantinedReports, SuspiciousSpokeReport fires, and deposits/withdrawals pause.
+    ///      This function itself never reverts — callers include token-carrying CCIP arrival
+    ///      paths (CONFIRM_WITHDRAWAL) that must still deliver their tokens and settle
+    ///      regardless of whether the reported BALANCE passes the band.
+    /// @param _chainSelector The reporting spoke's chain selector
+    /// @param reported The spoke's self-reported aggregate balance
+    function _applyReportedBalance(uint64 _chainSelector, uint256 reported) internal {
+        uint256 ceiling = (netSentToSpoke[_chainSelector] *
+            (10_000 + MAX_YIELD_BPS)) /
+            10_000 +
+            REPORT_DUST;
+        if (reported > ceiling) {
+            if (quarantinedReports[_chainSelector] == 0) {
+                activeQuarantineCount += 1;
+            }
+            quarantinedReports[_chainSelector] = reported;
+            emit SuspiciousSpokeReport(_chainSelector, reported, ceiling);
+            if (!paused()) _pause();
+            return;
+        }
+
+        uint256 previous = spokeBalances[_chainSelector];
+        if (
+            previous > 0 &&
+            reported < (previous * (10_000 - LOSS_ALERT_BPS)) / 10_000
+        ) {
+            emit SpokeBalanceDropped(_chainSelector, previous, reported);
+        }
+
+        spokeBalances[_chainSelector] = reported;
+        emit SpokeBalanceUpdated(_chainSelector, reported);
+    }
+
+    /// @notice Owner accepts a quarantined report — applies it to spokeBalances and unpauses
+    ///         once no spoke has an outstanding quarantine
+    /// @dev WI-7. Use once the owner has independently confirmed the reported balance is
+    ///      legitimate (e.g. genuine outsized yield, or a one-off catch-up report after a
+    ///      period of stale reporting).
+    /// @param _chainSelector The spoke whose quarantined report to accept
+    function acceptQuarantinedReport(uint64 _chainSelector) external onlyOwner {
+        uint256 amount = quarantinedReports[_chainSelector];
+        if (amount == 0) revert NoQuarantinedReport();
+        spokeBalances[_chainSelector] = amount;
+        delete quarantinedReports[_chainSelector];
+        if (activeQuarantineCount > 0) activeQuarantineCount -= 1;
+        emit QuarantinedReportAccepted(_chainSelector, amount);
+        emit SpokeBalanceUpdated(_chainSelector, amount);
+        if (activeQuarantineCount == 0 && paused()) _unpause();
+    }
+
+    /// @notice Owner rejects a quarantined report — discards it, spokeBalances stays as it
+    ///         was before the suspicious report, unpauses once no spoke has an outstanding
+    ///         quarantine
+    /// @dev WI-7. Use when the report is confirmed bogus (compromised spoke, decoding bug,
+    ///      etc.) — spokeBalances simply keeps its last-known-good value.
+    /// @param _chainSelector The spoke whose quarantined report to reject
+    function rejectQuarantinedReport(uint64 _chainSelector) external onlyOwner {
+        uint256 amount = quarantinedReports[_chainSelector];
+        if (amount == 0) revert NoQuarantinedReport();
+        delete quarantinedReports[_chainSelector];
+        if (activeQuarantineCount > 0) activeQuarantineCount -= 1;
+        emit QuarantinedReportRejected(_chainSelector, amount);
+        if (activeQuarantineCount == 0 && paused()) _unpause();
+    }
+
     // =========================================================================
     // CCIP Callback Handlers
     // =========================================================================
@@ -1125,9 +1274,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.CcipMessage memory _message,
         uint64 _chainSelector
     ) internal {
-        spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
-        emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
+        _applyReportedBalance(_chainSelector, _message.spokeBalance);
     }
 
     /// @notice Handles CONFIRM_RECEIPT from spoke — confirms deposit and clears inTransit
@@ -1139,7 +1287,6 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         CCIPHelpers.CcipMessage memory _message,
         uint64 _chainSelector
     ) internal {
-        spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
         inTransitAssets -= inTransitAmount[_message.messageId];
         delete inTransitAmount[_message.messageId];
@@ -1147,7 +1294,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         if (inTransitToSpoke[_chainSelector] > 0) {
             inTransitToSpoke[_chainSelector] -= 1;
         }
-        emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
+        _applyReportedBalance(_chainSelector, _message.spokeBalance);
     }
 
     /// @notice Handles REPORT_BALANCE from spoke — updates balance and attempts to settle a
@@ -1166,9 +1313,8 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         uint64 _chainSelector
     ) internal {
         bytes32 _messageId = _message.messageId;
-        spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
-        emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
+        _applyReportedBalance(_chainSelector, _message.spokeBalance);
         if (pendingWithdrawals[_messageId].shares > 0 && _allSpokesFresh()) {
             try this.attemptSettlement(_messageId) {} catch {}
         }
@@ -1198,9 +1344,14 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         uint256 actualAmount = destTokenAmounts.length > 0
             ? destTokenAmounts[0].amount
             : 0;
-        spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
-        emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
+        // WI-7: net down by the actual arrival, clamped at 0 — a spoke recalling more than
+        // the hub ever sent it is either yield (policed by the band below, not here) or a
+        // reporting inconsistency, neither of which should underflow this counter.
+        netSentToSpoke[_chainSelector] -= actualAmount > netSentToSpoke[_chainSelector]
+            ? netSentToSpoke[_chainSelector]
+            : actualAmount;
+        _applyReportedBalance(_chainSelector, _message.spokeBalance);
 
         bytes32 wid = legToWithdrawal[_messageId];
         if (wid != bytes32(0)) {

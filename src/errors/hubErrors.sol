@@ -70,3 +70,6 @@ error SpokeNotDrained();
 
 /// @notice Thrown when removeSpoke is called on a spoke with in-flight DEPOSIT legs
 error SpokeHasInFlightLegs();
+
+/// @notice Thrown when accept/rejectQuarantinedReport is called for a selector with no quarantined report
+error NoQuarantinedReport();

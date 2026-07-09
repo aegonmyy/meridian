@@ -134,7 +134,7 @@ contract WI7_SpokeReportSanityTest is BaseHubTest {
     /// out to "think through and test": quarantine never blocks token delivery, but it can
     /// legitimately leave a settlement deferred until the owner resolves the report and a
     /// later attempt sees an accurate totalAssets().
-    function test_wi7_quarantine_doesNotBlockTokenDelivery_butMaySeferSettlement() public {
+    function test_wi7_quarantine_doesNotBlockTokenDelivery_butMayDeferSettlement() public {
         _addPath3Headroom();
         _sendToSpoke(9_000e6); // idle 1_500e6, spoke 9_000e6, netSentToSpoke = 9_000e6
 

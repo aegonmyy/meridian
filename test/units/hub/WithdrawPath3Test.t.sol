@@ -43,12 +43,20 @@ contract WithdrawPath3Test is BaseHubTest {
         _setupPath3();
 
         uint256 aliceShares = hub.balanceOf(alice);
+        uint256 spokeBalanceBefore = hub.spokeBalances(chainSelector);
+        uint256 idleFree = usdc.balanceOf(address(hub));
+        uint256 shortfall = hub.previewRedeem(aliceShares) - idleFree;
 
         vm.prank(alice);
         hub.redeem(aliceShares, alice, alice);
 
-        // spoke sent back full shortfall — spoke balance goes to 0
-        assertEq(hub.spokeBalances(chainSelector), 0);
+        // WI-4: spoke sends back exactly the shortfall (headroom from the second
+        // depositor added by _setupPath3 means this is < the spoke's full balance —
+        // the remainder is the second depositor's still-deployed share).
+        assertEq(
+            hub.spokeBalances(chainSelector),
+            spokeBalanceBefore - shortfall
+        );
     }
 
     function test_withdraw_path3_totalAssetsDecreasesByWithdrawnAmount()
@@ -94,7 +102,8 @@ contract WithdrawPath3Test is BaseHubTest {
     }
 
     function test_withdraw_path3_onlyRecallsShortfall() public {
-        // send 9_000 to spoke — hub has 1_000 idle, spoke has 9_000
+        _addPath3Headroom();
+// send 9_000 to spoke — hub has 1_000 idle, spoke has 9_000
         _sendToSpoke(9_000e6);
 
         uint256 idleBefore = usdc.balanceOf(address(hub));
@@ -110,7 +119,8 @@ contract WithdrawPath3Test is BaseHubTest {
     }
 
     function test_withdraw_path3_reservedAssetsZeroAfterSettlement() public {
-        _sendToSpoke(9_000e6);
+        _addPath3Headroom();
+_sendToSpoke(9_000e6);
 
         uint256 aliceShares = hub.balanceOf(alice);
 
@@ -177,7 +187,8 @@ contract WithdrawPath3Test is BaseHubTest {
     // ── Scenario 2 — pending withdrawal exists ────────────────────────────────
 
     function test_recallFromSpoke_pendingWithdrawal_userReceivesUSDC() public {
-        _sendToSpoke(9_000e6);
+        _addPath3Headroom();
+_sendToSpoke(9_000e6);
 
         uint256 aliceBalanceBefore = usdc.balanceOf(alice);
         uint256 aliceShares = hub.balanceOf(alice);
@@ -190,7 +201,8 @@ contract WithdrawPath3Test is BaseHubTest {
     }
 
     function test_recallFromSpoke_pendingWithdrawal_sharesFullyBurned() public {
-        _sendToSpoke(9_000e6);
+        _addPath3Headroom();
+_sendToSpoke(9_000e6);
 
         uint256 aliceShares = hub.balanceOf(alice);
 
@@ -204,7 +216,8 @@ contract WithdrawPath3Test is BaseHubTest {
     function test_recallFromSpoke_pendingWithdrawal_reservedAssetsZero()
         public
     {
-        _sendToSpoke(9_000e6);
+        _addPath3Headroom();
+_sendToSpoke(9_000e6);
 
         uint256 aliceShares = hub.balanceOf(alice);
 
@@ -217,7 +230,8 @@ contract WithdrawPath3Test is BaseHubTest {
     function test_recallFromSpoke_pendingWithdrawal_totalAssetsDecreased()
         public
     {
-        _sendToSpoke(9_000e6);
+        _addPath3Headroom();
+_sendToSpoke(9_000e6);
 
         uint256 aliceShares = hub.balanceOf(alice);
         uint256 assetsToReceive = hub.previewRedeem(aliceShares);

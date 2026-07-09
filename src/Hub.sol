@@ -10,7 +10,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal, InsufficientUnreservedIdle, InvalidRecallAmount} from "./errors/hubErrors.sol";
+import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal, InsufficientUnreservedIdle, InvalidRecallAmount, InsufficientRecallLiquidity, NoPendingWithdrawal, NotWithdrawalOwner, WithdrawalNotYetCancellable} from "./errors/hubErrors.sol";
 
 /// @title HubVault
 /// @notice ERC4626 vault on Ethereum — entry point for all user deposits and withdrawals.
@@ -32,25 +32,36 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     // =========================================================================
 
     /// @notice Tracks a queued withdrawal awaiting spoke balance confirmation or fund recall
-    /// @dev Created in Path 2 (stale balances) and Path 3 (insufficient idle).
-    ///      `_reservedAssets` tracks how much idle was locked at queue time so
-    ///      `reservedAssets` can be decremented precisely on settlement regardless of path.
-    ///      Path 1: no pending withdrawal created — settled synchronously.
-    ///      Path 2: `_reservedAssets == assets` — full idle reservation.
-    ///      Path 3: `_reservedAssets == idle` — partial reservation, remainder recalled from spoke.
+    /// @dev WI-4 withdrawal engine v2. Created in Path 2 (stale balances) and Path 3
+    ///      (insufficient idle). Path 1: no pending withdrawal created — settled synchronously.
+    ///      `quotedAssets` is the previewRedeem() value AT REQUEST TIME — reference and recall
+    ///      sizing only. It is NOT a promise: settlement recomputes payout via previewRedeem()
+    ///      again at claim time (claim-time pricing is the decided v2 semantic — a loss or
+    ///      gain reported while a Path 3 recall is in flight changes what the withdrawer
+    ///      actually receives). `reservedIdle` is the idle locked at request time
+    ///      (`<= quotedAssets`) — `reservedAssets` is decremented by exactly this amount on
+    ///      settlement or cancellation, regardless of what payout ends up being.
+    ///      `arrivedAssets` accumulates the ACTUAL token amounts (destTokenAmounts — never the
+    ///      payload's claimed amount) from each Path 3 recall leg as they land.
+    ///      `pendingLegs` counts outstanding Path 3 recall legs — 0 for Path 2 (no legs, just
+    ///      a REPORT_BALANCE refresh) and 0 once all Path 3 legs have arrived.
     struct PendingWithdrawal {
         /// @dev Shares transferred to hub contract at queue time — burned on settlement
         uint256 shares;
-        /// @dev Full asset value owed to the withdrawer
-        uint256 assets;
-        /// @dev Block timestamp when withdrawal was queued
-        uint256 requestedAt;
+        /// @dev previewRedeem(shares) at request time — reference & recall sizing only, not a promise
+        uint256 quotedAssets;
+        /// @dev Idle USDC reserved (locked) at request time — <= quotedAssets
+        uint256 reservedIdle;
+        /// @dev Sum of ACTUAL recalled token arrivals for this withdrawal's Path 3 legs
+        uint256 arrivedAssets;
+        /// @dev Outstanding Path 3 recall legs — 0 for Path 2, decrements as legs arrive
+        uint32 pendingLegs;
+        /// @dev Block timestamp when withdrawal was queued — gates cancelWithdrawal via WITHDRAWAL_TIMEOUT
+        uint64 requestedAt;
         /// @dev Address that will receive the USDC on settlement
         address receiver;
-        /// @dev Address whose shares were transferred to hub
+        /// @dev Address whose shares were transferred to hub — also the only address that can cancel
         address owner;
-        /// @dev Amount of idle USDC reserved at queue time — 0 if no idle was available
-        uint256 _reservedAssets;
     }
 
     /// @notice Stores spoke vault address and registration status for a chain
@@ -113,9 +124,29 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     ///      across the hub's lifetime, so same-block withdrawals never collide.
     mapping(bytes32 => PendingWithdrawal) public pendingWithdrawals;
 
+    /// @notice Maps a Path 3 recall leg's messageId back to the withdrawal id it belongs to
+    /// @dev Set when a leg is dispatched, read (not deleted) on arrival — deliberately never
+    ///      deleted so a late-arriving leg for an already-settled or cancelled withdrawal can
+    ///      still be recognized and routed to the orphaned-arrival no-op path instead of being
+    ///      silently mistaken for a fresh, unrelated Rebalancer-driven recall (WI-3).
+    mapping(bytes32 => bytes32) public legToWithdrawal;
+
     /// @notice Maximum age of a spoke balance report before it is considered stale
     /// @dev Stale reports trigger Path 2 withdrawal — a REPORT_BALANCE refresh cycle.
     uint256 public constant MAX_STALENESS = 1 hours;
+
+    /// @notice Grace period after which an unsettled withdrawal becomes cancellable
+    /// @dev Backstop for a withdrawal stuck in SettlementDeferred (persistent insolvency) or
+    ///      a Path 3 recall leg that never arrives. Cancelling returns escrowed shares —
+    ///      the user keeps their claim on any later-arriving leg funds via ordinary idle.
+    // TUNE: default from the plan — Open Questions #1, not decided further here.
+    uint256 public constant WITHDRAWAL_TIMEOUT = 24 hours;
+
+    /// @notice Basis-point haircut applied to a spoke's reported balance when sizing a Path 3 recall leg
+    /// @dev Safety margin against stale spokeBalances — never ask a spoke for more than
+    ///      (10000 - RECALL_HAIRCUT_BPS)/10000 of what hub believes it holds.
+    // TUNE: default from the plan — Open Questions #1, not decided further here.
+    uint256 public constant RECALL_HAIRCUT_BPS = 50;
 
     /// @notice Total USDC currently in CCIP transit — sent to spoke but not yet confirmed
     /// @dev Incremented on DEPOSIT ccipSend, decremented on CONFIRM_RECEIPT callback.
@@ -146,12 +177,17 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     // =========================================================================
 
     /// @notice Emitted when a withdrawal cannot be settled immediately and is queued
+    /// @dev `id` is required off-chain to call cancelWithdrawal() or attemptSettlement() —
+    ///      the hub never exposes a way to enumerate pending withdrawals, so this event is
+    ///      the only source of an owner's withdrawal id.
     /// @param owner Address whose shares are held in escrow by hub
+    /// @param id The withdrawal id keying this entry in pendingWithdrawals
     /// @param shares Number of shares transferred to hub and locked
-    /// @param assets Full USDC value owed to the withdrawer on settlement
+    /// @param assets Full USDC value owed to the withdrawer on settlement (quote, not a promise — WI-4 claim-time pricing)
     /// @param _reservedAssets Amount of idle USDC reserved at queue time (0 if none available)
     event WithdrawalQueued(
         address indexed owner,
+        bytes32 indexed id,
         uint256 shares,
         uint256 assets,
         uint256 _reservedAssets
@@ -210,6 +246,34 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @param chainSelector Chain selector the recall was sourced from
     /// @param amount Actual USDC amount that arrived (from the CCIP token envelope)
     event RecallCompleted(uint64 indexed chainSelector, uint256 amount);
+
+    /// @notice Emitted when a Path 3 recall leg or stray token arrival matches no live
+    ///         pendingWithdrawal — e.g. a leg for a withdrawal that already settled early
+    ///         (claim-time solvency let it pay out before all legs landed) or was cancelled
+    /// @dev Funds become ordinary hub idle — no action needed, this is informational.
+    /// @param chainSelector Chain selector the arrival came from
+    /// @param amount Actual USDC amount that arrived
+    event OrphanedRecallArrival(uint64 indexed chainSelector, uint256 amount);
+
+    /// @notice Emitted when a settlement attempt finds insufficient claimable idle right now
+    /// @dev Non-fatal — the entry stays pending and a later confirm (another leg arrival, or
+    ///      another REPORT_BALANCE round for Path 2) retries. Never reverts a CCIP execution.
+    /// @param id The withdrawal id
+    /// @param payout Claim-time payout that would be owed if settled now
+    /// @param availableForThisEntry Idle currently claimable by this entry alone
+    event SettlementDeferred(bytes32 indexed id, uint256 payout, uint256 availableForThisEntry);
+
+    /// @notice Emitted alongside WithdrawalProcessed when claim-time payout differs from the
+    ///         quote taken at request time (yield or loss accrued while the withdrawal was pending)
+    /// @param id The withdrawal id
+    /// @param quotedAssets previewRedeem(shares) at request time
+    /// @param payout Actual previewRedeem(shares) at settlement time
+    event WithdrawalRepriced(bytes32 indexed id, uint256 quotedAssets, uint256 payout);
+
+    /// @notice Emitted when a timed-out pending withdrawal is cancelled by its owner
+    /// @param id The withdrawal id
+    /// @param shares Shares returned to the owner
+    event WithdrawalCancelled(bytes32 indexed id, uint256 shares);
 
     // =========================================================================
     // Modifiers
@@ -519,13 +583,25 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         super._deposit(caller, receiver, assets, shares);
     }
 
-    /// @notice Overrides ERC4626._withdraw to implement three-path async withdrawal
+    /// @notice Overrides ERC4626._withdraw to implement the WI-4 three-path async withdrawal engine
     /// @dev Shares are transferred to hub at start and only burned on final settlement.
     ///      No super() call — full flow is owned here.
     ///      messageId is derived from a monotonic nonce via _newMessageId — collision-free.
-    ///      Path 1 (sync): idle >= assets AND all spokes fresh → immediate settlement.
-    ///      Path 2 (async): idle >= assets AND any spoke stale → queue + REPORT_BALANCE.
-    ///      Path 3 (async): idle < assets → reserve idle, recall shortfall from best spoke.
+    ///      Path 1 (sync): idle >= assets AND all spokes fresh → immediate settlement at the
+    ///        quote taken this instant (no daylight between quote and settlement).
+    ///      Path 2 (async): idle >= assets AND any spoke stale → queue + REPORT_BALANCE;
+    ///        settles once ALL spokes report fresh (not on the first report — that was a bug).
+    ///      Path 3 (async): idle < assets → reserve available idle, plan recall legs across
+    ///        active spokes by descending spokeBalances, haircut-capped
+    ///        (RECALL_HAIRCUT_BPS) per leg. If the shortfall cannot be fully planned even
+    ///        across every active spoke, the ENTIRE call reverts with
+    ///        InsufficientRecallLiquidity — fail-closed, nothing locks, user keeps shares.
+    ///        Only if fully coverable does the hub commit (reserve idle, create the pending
+    ///        entry) and dispatch legs.
+    ///      CLAIM-TIME PRICING (user-facing behavioral change from v1): for Path 2/3, the
+    ///      amount actually paid out is previewRedeem(shares) recomputed AT SETTLEMENT, not
+    ///      the quote taken here. Yield accrued while pending is credited to the withdrawer;
+    ///      a loss reported while pending reduces their payout. See _attemptSettleWithdrawal.
     /// @param caller Address initiating the withdrawal (may differ from owner if approved)
     /// @param receiver Address to receive the USDC
     /// @param owner Address whose shares are being redeemed
@@ -544,81 +620,156 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         _transfer(owner, address(this), shares);
         assets = previewRedeem(shares);
         if (assets == 0) revert ZeroWithdrawal();
-        uint256 idle = _idleBalance() - reservedAssets;
+        uint256 idleFree = _idleBalance() - reservedAssets;
         bytes32 _messageId = _newMessageId(bytes32(uint256(uint160(receiver))));
-        if (idle >= assets) {
+
+        if (idleFree >= assets) {
             reservedAssets += assets;
             if (_allSpokesFresh()) {
-                // Path 1 — synchronous settlement
-                _processWithdrawal(
-                    owner,
-                    receiver,
-                    shares,
-                    assets,
-                    assets,
-                    _messageId
-                );
+                // Path 1 — synchronous settlement, quote == payout, no entry created
+                reservedAssets -= assets;
+                _burn(address(this), shares);
+                IERC20(asset()).safeTransfer(receiver, assets);
+                emit WithdrawalProcessed(owner, receiver, assets, _messageId);
             } else {
-                // Path 2 — queue and request fresh spoke balances
+                // Path 2 — queue and request fresh spoke balances; settles when all fresh
                 pendingWithdrawals[_messageId] = PendingWithdrawal({
-                    owner: owner,
                     shares: shares,
-                    assets: assets,
-                    requestedAt: block.timestamp,
+                    quotedAssets: assets,
+                    reservedIdle: assets,
+                    arrivedAssets: 0,
+                    pendingLegs: 0,
+                    requestedAt: uint64(block.timestamp),
                     receiver: receiver,
-                    _reservedAssets: assets
+                    owner: owner
                 });
                 this._requestAllBalanceReports(_messageId);
-                emit WithdrawalQueued(owner, shares, assets, assets);
+                emit WithdrawalQueued(owner, _messageId, shares, assets, assets);
             }
-        } else {
-            // Path 3 — insufficient idle, recall shortfall from best spoke
-            pendingWithdrawals[_messageId] = PendingWithdrawal({
-                owner: owner,
-                shares: shares,
-                assets: assets,
-                requestedAt: block.timestamp,
-                receiver: receiver,
-                _reservedAssets: idle
-            });
-            uint64 _chainSelector = _findBestSpoke();
-            uint256 shortfall = assets - idle;
-            reservedAssets += idle;
+            return;
+        }
+
+        // Path 3 — insufficient idle, plan recall legs across active spokes.
+        // Planning is a pure dry run first — no state committed, no CCIP dispatched — so an
+        // uncoverable shortfall can revert the ENTIRE call cleanly (fail-closed, nothing locks).
+        uint256 shortfall = assets - idleFree;
+        uint64[] memory order = _spokesByDescendingBalance();
+        uint256 remaining = shortfall;
+        for (uint256 i = 0; i < order.length && remaining > 0; i++) {
+            uint256 cap = (spokeBalances[order[i]] * (10_000 - RECALL_HAIRCUT_BPS)) / 10_000;
+            uint256 leg = remaining < cap ? remaining : cap;
+            remaining -= leg;
+        }
+        if (remaining > 0) {
+            revert InsufficientRecallLiquidity(shortfall, shortfall - remaining);
+        }
+
+        // Fully coverable — commit and dispatch.
+        reservedAssets += idleFree;
+        pendingWithdrawals[_messageId] = PendingWithdrawal({
+            shares: shares,
+            quotedAssets: assets,
+            reservedIdle: idleFree,
+            arrivedAssets: 0,
+            pendingLegs: 0,
+            requestedAt: uint64(block.timestamp),
+            receiver: receiver,
+            owner: owner
+        });
+
+        remaining = shortfall;
+        uint32 legCount;
+        for (uint256 i = 0; i < order.length && remaining > 0; i++) {
+            uint64 selector = order[i];
+            uint256 cap = (spokeBalances[selector] * (10_000 - RECALL_HAIRCUT_BPS)) / 10_000;
+            uint256 leg = remaining < cap ? remaining : cap;
+            if (leg == 0) continue;
+            bytes32 legId = _newMessageId(bytes32(uint256(selector)));
+            legToWithdrawal[legId] = _messageId;
+            legCount++;
+            remaining -= leg;
             CCIPHelpers.AdapterInstructions[]
                 memory _instructions = new CCIPHelpers.AdapterInstructions[](1);
             _instructions[0] = CCIPHelpers.AdapterInstructions({
                 adapter: bytes32(0),
-                amount: shortfall,
+                amount: leg,
                 targetAdapter: bytes32(0),
                 targetAmount: 0
             });
-            this.recallFromSpoke(_chainSelector, _instructions, _messageId);
-            emit WithdrawalQueued(owner, shares, assets, idle);
+            this.recallFromSpoke(selector, _instructions, legId);
         }
+        pendingWithdrawals[_messageId].pendingLegs = legCount;
+        emit WithdrawalQueued(owner, _messageId, shares, assets, idleFree);
     }
 
-    /// @notice Settles a withdrawal by burning shares and transferring USDC to receiver
-    /// @dev Called directly for Path 1 (sync) and from CCIP callbacks for Path 2 and 3.
-    ///      Decrements reservedAssets by exactly the amount that was reserved at queue time
-    ///      — handles all three paths correctly regardless of partial idle reservation.
-    /// @param owner Address whose shares are burned
-    /// @param receiver Address receiving the USDC
-    /// @param shares Number of shares to burn from hub's escrow balance
-    /// @param assets Amount of USDC to transfer to receiver
-    /// @param _reservedAssets Amount to decrement from reservedAssets (set at queue time)
-    /// @param _messageId MessageId emitted in WithdrawalProcessed for off-chain tracking
-    function _processWithdrawal(
-        address owner,
-        address receiver,
-        uint256 shares,
-        uint256 assets,
-        uint256 _reservedAssets,
-        bytes32 _messageId
-    ) internal {
-        reservedAssets -= _reservedAssets;
-        _burn(address(this), shares);
-        IERC20(asset()).safeTransfer(receiver, assets);
-        emit WithdrawalProcessed(owner, receiver, assets, _messageId);
+    /// @notice Cancels a pending withdrawal after WITHDRAWAL_TIMEOUT has elapsed
+    /// @dev Backstop for a withdrawal stuck in SettlementDeferred, or a Path 3 leg that never
+    ///      arrives. Returns escrowed shares to the owner and releases the reservation.
+    ///      Already-arrived leg funds (if any) remain vault idle — correct, since the caller
+    ///      got their shares back and thus their proportional claim on those assets too.
+    ///      Late-arriving legs after cancellation hit the unknown-leg no-op path in
+    ///      _handleWithdrawalCallback (legToWithdrawal still resolves, but
+    ///      pendingWithdrawals[id].shares == 0 after this delete) — no special handling needed.
+    /// @param id The withdrawal id to cancel
+    function cancelWithdrawal(bytes32 id) external {
+        PendingWithdrawal memory entry = pendingWithdrawals[id];
+        if (entry.shares == 0) revert NoPendingWithdrawal();
+        if (msg.sender != entry.owner) revert NotWithdrawalOwner();
+        if (block.timestamp <= entry.requestedAt + WITHDRAWAL_TIMEOUT) {
+            revert WithdrawalNotYetCancellable();
+        }
+        reservedAssets -= entry.reservedIdle;
+        delete pendingWithdrawals[id];
+        _transfer(address(this), entry.owner, entry.shares);
+        emit WithdrawalCancelled(id, entry.shares);
+    }
+
+    /// @notice Attempts to settle a pending withdrawal at its claim-time price
+    /// @dev Permissionless — anyone can nudge a pending withdrawal to retry settlement (also
+    ///      called internally, wrapped in try/catch, from the CCIP arrival callbacks so an
+    ///      external-call failure here — e.g. safeTransfer to an incompatible receiver — can
+    ///      never revert a token-carrying CCIP execution). Never reverts on insolvency; see
+    ///      _attemptSettleWithdrawal.
+    /// @param id The withdrawal id to attempt settlement for
+    function attemptSettlement(bytes32 id) external {
+        _attemptSettleWithdrawal(id);
+    }
+
+    /// @notice Core non-reverting settlement attempt — claim-time pricing, solvency-gated
+    /// @dev CLAIM-TIME PRICING: payout is previewRedeem(shares) recomputed NOW, not the quote
+    ///      taken at request time. quotedAssets is reference/sizing only, never a promise —
+    ///      this is the decided v2 semantic (yield during flight settles from free idle by
+    ///      design; a loss during flight reduces payout).
+    ///      SOLVENCY: settles only if idle currently claimable by THIS entry alone (total idle
+    ///      minus everyone else's reservation) covers payout — never touches other entries'
+    ///      reservations. If not yet solvent, emits SettlementDeferred and returns; the entry
+    ///      stays pending for a later retry (another leg arrival, cancellation is the backstop).
+    ///      Never reverts on insufficiency — that would poison a token-carrying CCIP message.
+    /// @param id The withdrawal id to attempt settlement for
+    function _attemptSettleWithdrawal(bytes32 id) internal {
+        PendingWithdrawal memory entry = pendingWithdrawals[id];
+        if (entry.shares == 0) return; // unknown / already settled / cancelled
+
+        uint256 payout = previewRedeem(entry.shares);
+        uint256 idle = _idleBalance();
+        uint256 reservedByOthers = reservedAssets - entry.reservedIdle;
+        uint256 availableForThisEntry = idle > reservedByOthers
+            ? idle - reservedByOthers
+            : 0;
+
+        if (availableForThisEntry < payout) {
+            emit SettlementDeferred(id, payout, availableForThisEntry);
+            return;
+        }
+
+        reservedAssets -= entry.reservedIdle;
+        delete pendingWithdrawals[id];
+        _burn(address(this), entry.shares);
+        IERC20(asset()).safeTransfer(entry.receiver, payout);
+        emit WithdrawalProcessed(entry.owner, entry.receiver, payout, id);
+        if (payout != entry.quotedAssets) {
+            emit WithdrawalRepriced(id, entry.quotedAssets, payout);
+        }
     }
 
     // =========================================================================
@@ -650,19 +801,42 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         }
     }
 
-    /// @notice Returns the chain selector of the spoke with the highest reported balance
-    /// @dev Used in Path 3 to select which spoke to recall from. spokeBalances may be
-    ///      slightly stale but safe — balances only decrease via user-triggered recalls,
-    ///      so the selected spoke will always have at least as much as reported.
-    /// @return bestSelector Chain selector of the spoke with the highest reported USDC balance
-    function _findBestSpoke() internal view returns (uint64 bestSelector) {
+    /// @notice Returns active spoke selectors ordered by descending reported balance
+    /// @dev WI-4 replaces the old single-best-spoke selection — Path 3 now plans legs
+    ///      across as many spokes as needed (greedy, largest first) rather than recalling
+    ///      everything from one spoke. spokeBalances may be slightly stale; RECALL_HAIRCUT_BPS
+    ///      in the caller is the safety margin for that, not this ordering.
+    ///      Selection sort — active spoke counts are small by design (a handful per protocol).
+    /// @return sorted Active chain selectors, descending by spokeBalances
+    function _spokesByDescendingBalance()
+        internal
+        view
+        returns (uint64[] memory sorted)
+    {
         uint64[] memory selectors = spokeChainSelectors;
-        uint256 bestBalance;
-        for (uint256 i = 0; i < selectors.length; i++) {
-            if (spokes[selectors[i]].exists == false) continue;
-            if (spokeBalances[selectors[i]] > bestBalance) {
-                bestBalance = spokeBalances[selectors[i]];
-                bestSelector = selectors[i];
+        uint256 n = selectors.length;
+        uint64[] memory active = new uint64[](n);
+        uint256 count;
+        for (uint256 i = 0; i < n; i++) {
+            if (spokes[selectors[i]].exists) {
+                active[count++] = selectors[i];
+            }
+        }
+        sorted = new uint64[](count);
+        for (uint256 i = 0; i < count; i++) {
+            sorted[i] = active[i];
+        }
+        for (uint256 i = 0; i < count; i++) {
+            uint256 maxIdx = i;
+            for (uint256 j = i + 1; j < count; j++) {
+                if (spokeBalances[sorted[j]] > spokeBalances[sorted[maxIdx]]) {
+                    maxIdx = j;
+                }
+            }
+            if (maxIdx != i) {
+                uint64 tmp = sorted[i];
+                sorted[i] = sorted[maxIdx];
+                sorted[maxIdx] = tmp;
             }
         }
     }
@@ -864,10 +1038,15 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
     }
 
-    /// @notice Handles REPORT_BALANCE from spoke — updates balance and settles pending Path 2 withdrawal
-    /// @dev Spoke sends this in response to a REPORT_BALANCE request from hub.
-    ///      If a pending withdrawal exists for this messageId it is settled immediately
-    ///      since idle was already reserved and balances are now confirmed fresh.
+    /// @notice Handles REPORT_BALANCE from spoke — updates balance and attempts to settle a
+    ///         pending Path 2 withdrawal once ALL active spokes are fresh
+    /// @dev Spoke sends this in response to a REPORT_BALANCE request from hub. WI-4 fix:
+    ///      previously settled on the FIRST spoke's report even with other spokes still
+    ///      stale — now gated on _allSpokesFresh() so settlement uses a fully-refreshed
+    ///      balance picture. Settlement itself is via attemptSettlement (claim-time pricing,
+    ///      non-reverting), wrapped in try/catch so an external-call failure inside
+    ///      settlement (e.g. safeTransfer to an incompatible receiver) can never revert this
+    ///      CCIP execution.
     /// @param _message Decoded CCIP message carrying updated spokeBalance and reportTimestamp
     /// @param _chainSelector Source chain selector identifying which spoke sent the message
     function _handleReportBalanceCallback(
@@ -878,28 +1057,23 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
         emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
-        if (pendingWithdrawals[_messageId].shares > 0) {
-            _processWithdrawal(
-                pendingWithdrawals[_messageId].owner,
-                pendingWithdrawals[_messageId].receiver,
-                pendingWithdrawals[_messageId].shares,
-                pendingWithdrawals[_messageId].assets,
-                pendingWithdrawals[_messageId]._reservedAssets,
-                _messageId
-            );
-            delete pendingWithdrawals[_messageId];
+        if (pendingWithdrawals[_messageId].shares > 0 && _allSpokesFresh()) {
+            try this.attemptSettlement(_messageId) {} catch {}
         }
     }
 
-    /// @notice Handles CONFIRM_WITHDRAWAL from spoke — funds arrived, settles a pending Path 3
-    ///         withdrawal if one matches this id, otherwise this was a Rebalancer-driven
-    ///         recall (WI-3) and the arrived tokens become ordinary hub idle
-    /// @dev Spoke sends this after pulling funds from adapters and transferring USDC back to hub.
-    ///      By the time this fires, the shortfall USDC has arrived at hub. Combined with
-    ///      the idle that was reserved at queue time, hub has enough to settle the withdrawal.
-    ///      actualAmount is read from destTokenAmounts (the CCIP token envelope) — the
-    ///      ground truth of what arrived — not from the payload, which carries no amount
-    ///      for confirm messages post-WI-2 (see docs/revert-audit.md).
+    /// @notice Handles CONFIRM_WITHDRAWAL from spoke — funds arrived. Three cases:
+    ///         (1) a live Path 3 recall leg — credit the arrival and attempt settlement;
+    ///         (2) an orphaned leg (withdrawal already settled early or cancelled) — funds
+    ///             become ordinary idle, informational event only;
+    ///         (3) never a leg at all — a WI-3 Rebalancer-driven recall, funds become idle
+    /// @dev Spoke sends this after pulling funds from adapters and transferring USDC back to
+    ///      hub. actualAmount is read from destTokenAmounts (the CCIP token envelope) — the
+    ///      ground truth of what arrived — never from the payload, which carries no amount
+    ///      for confirm messages post-WI-2 (see docs/revert-audit.md). legToWithdrawal
+    ///      disambiguates case (2) from (3): a leg id is always registered at dispatch time,
+    ///      so `legToWithdrawal[id] != 0` proves this WAS a leg (case 1/2); a fresh WI-3 id
+    ///      was never registered as a leg (case 3).
     /// @param _message Decoded CCIP message carrying updated spokeBalance and reportTimestamp
     /// @param _chainSelector Source chain selector identifying which spoke sent the message
     /// @param destTokenAmounts Token envelope delivered alongside this message — ground truth
@@ -915,17 +1089,20 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         spokeBalances[_chainSelector] = _message.spokeBalance;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
         emit SpokeBalanceUpdated(_chainSelector, _message.spokeBalance);
-        if (pendingWithdrawals[_messageId].shares > 0) {
-            _processWithdrawal(
-                pendingWithdrawals[_messageId].owner,
-                pendingWithdrawals[_messageId].receiver,
-                pendingWithdrawals[_messageId].shares,
-                pendingWithdrawals[_messageId].assets,
-                pendingWithdrawals[_messageId]._reservedAssets,
-                _messageId
-            );
-            delete pendingWithdrawals[_messageId];
+
+        bytes32 wid = legToWithdrawal[_messageId];
+        if (wid != bytes32(0)) {
+            if (pendingWithdrawals[wid].shares > 0) {
+                pendingWithdrawals[wid].arrivedAssets += actualAmount;
+                if (pendingWithdrawals[wid].pendingLegs > 0) {
+                    pendingWithdrawals[wid].pendingLegs -= 1;
+                }
+                try this.attemptSettlement(wid) {} catch {}
+            } else {
+                emit OrphanedRecallArrival(_chainSelector, actualAmount);
+            }
         } else {
+            // never a leg — WI-3 Rebalancer-driven recall, funds become ordinary idle
             emit RecallCompleted(_chainSelector, actualAmount);
         }
     }

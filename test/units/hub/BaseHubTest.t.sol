@@ -153,9 +153,29 @@ abstract contract BaseHubTest is Test {
     }
 
     function _setupPath3() internal {
+        // WI-4: RECALL_HAIRCUT_BPS (50 bps) caps each Path 3 leg at 99.5% of the spoke's
+        // reported balance, as a stale-balance safety margin. A single-spoke withdrawal
+        // whose shortfall equals exactly 100% of that spoke's balance is therefore
+        // structurally uncoverable — by design (see WithdrawPath3Test's dedicated
+        // InsufficientRecallLiquidity tests). To let alice's FULL redemption still settle
+        // successfully in these plumbing tests, _addPath3Headroom() adds a small second
+        // depositor first so alice's claim is a bit less than 100% of the vault, leaving
+        // genuine spare capacity in the spoke beyond the haircut margin.
+        _addPath3Headroom();
         // send 9_000 of alice's 10_000 to spoke — only 1_000 idle remains
         // alice's shares worth 10_000 — idle (1_000) insufficient — Path 3
         _sendToSpoke(9_000e6);
+    }
+
+    /// @dev Adds a small second depositor so a full redemption of alice's original stake
+    /// does not require exactly 100% of a single spoke's balance — see _setupPath3().
+    function _addPath3Headroom() internal {
+        address headroomDepositor = makeAddr("headroomDepositor");
+        usdc.mint(headroomDepositor, 500e6);
+        vm.startPrank(headroomDepositor);
+        usdc.approve(address(hub), 500e6);
+        hub.deposit(500e6, headroomDepositor);
+        vm.stopPrank();
     }
 
     function _deployCompoundAdapter()

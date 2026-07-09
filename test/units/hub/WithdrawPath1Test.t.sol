@@ -3,7 +3,8 @@ pragma solidity 0.8.33;
 
 import {BaseHubTest} from "./BaseHubTest.t.sol";
 import {HUB} from "../../../src/Hub.sol";
-import {ZeroWithdrawal} from "../../../src/errors/hubErrors.sol";
+import {ZeroWithdrawal, InsufficientRecallLiquidity} from "../../../src/errors/hubErrors.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 /// @notice Tests for _withdraw Path 1, _allSpokesFresh, and _findBestSpoke
 contract WithdrawPath1Test is BaseHubTest {
@@ -331,40 +332,85 @@ contract WithdrawPath1Test is BaseHubTest {
     }
 
     // =========================================================================
-    // _findBestSpoke Tests
+    // Path 3 leg planning Tests (WI-4 — replaces the old single-best-spoke _findBestSpoke)
     // =========================================================================
 
-    function test_findBestSpoke_recallsFromHighestBalance() public {
-        // register second spoke — mock address, CCIP will fail to it
-        // we only care that hub ATTEMPTS to recall from the highest balance spoke
+    /// @dev WI-4 replaces single-spoke selection with multi-leg planning across active
+    /// spokes ordered by descending reported balance. This verifies that ordering directly
+    /// via dispatched SentToSpoke events, using a scenario sized so the shortfall requires
+    /// both legs. spoke2 is a mock (non-contract) address — its leg dispatch never actually
+    /// delivers or confirms (CCIP to a non-contract address silently no-ops rather than
+    /// reverting), so this test only asserts dispatch ORDER, not full settlement.
+    function test_pathThree_multiLeg_ordersByDescendingBalance() public {
         uint64 selector2 = 9999;
         address mockSpoke2 = makeAddr("spoke2");
         vm.prank(owner);
         hub.addSpoke(selector2, mockSpoke2);
 
-        // spoke1 balance = 3_000, spoke2 balance = 8_000
-        _setSpokeBalance(chainSelector, 3_000e6);
-        _setSpokeBalance(selector2, 8_000e6);
+        // real spoke funded with 3_000e6 — genuinely backed
+        _sendToSpoke(3_000e6);
+        // mock spoke2 "reports" a higher balance via storage — narrow unit-test
+        // construction for ordering purposes only, consistent with existing
+        // _setSpokeBalance conventions elsewhere in this suite.
+        _setSpokeBalance(selector2, 5_000e6);
         _setLastReportTimestamp(chainSelector, block.timestamp);
         _setLastReportTimestamp(selector2, block.timestamp);
 
-        // drain hub idle below alice's share value — triggers Path 3
+        // drain hub idle so a moderate withdrawal needs a multi-leg recall:
+        // shortfall (5_500e6) > either spoke's single haircut-capped capacity alone
+        // (4_975e6 / 2_985e6) but <= their sum (7_960e6) — fully coverable across both.
+        deal(address(usdc), address(hub), 500e6);
+
+        vm.recordLogs();
+        vm.prank(alice);
+        hub.withdraw(6_000e6, alice, alice);
+
+        uint64[] memory dispatchOrder = _sentToSpokeSelectors();
+        assertEq(dispatchOrder.length, 2, "expected two dispatched legs");
+        assertEq(dispatchOrder[0], selector2, "higher-balance spoke recalled first");
+        assertEq(dispatchOrder[1], chainSelector, "lower-balance spoke recalled second");
+    }
+
+    /// @dev WI-4 fail-closed behavior: when even planning across every active spoke cannot
+    /// cover the shortfall (haircut-capped), the whole _withdraw call reverts —
+    /// InsufficientRecallLiquidity — instead of the old silent oversized single-spoke recall
+    /// that could permanently lock the user's shares. Shares stay with the user, nothing locks.
+    function test_pathThree_revert_insufficientRecallLiquidity() public {
+        uint64 selector2 = 9999;
+        address mockSpoke2 = makeAddr("spoke2");
+        vm.prank(owner);
+        hub.addSpoke(selector2, mockSpoke2);
+
+        _sendToSpoke(3_000e6);
+        _setSpokeBalance(selector2, 5_000e6);
+        _setLastReportTimestamp(chainSelector, block.timestamp);
+        _setLastReportTimestamp(selector2, block.timestamp);
+
+        // full redemption needs 100% of both spokes' reported balances combined —
+        // structurally uncoverable under the RECALL_HAIRCUT_BPS margin.
         deal(address(usdc), address(hub), 100e6);
 
         uint256 shares = hub.balanceOf(alice);
         uint256 assets = hub.previewRedeem(shares);
 
-        // Path 3 — CCIP to mockSpoke2 will fail since it's not a real contract
-        // withdrawal stays queued
         vm.prank(alice);
-        try hub.withdraw(assets, alice, alice) {} catch {}
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                InsufficientRecallLiquidity.selector,
+                assets - 100e6,
+                7_960e6 // 4_975e6 (selector2) + 2_985e6 (chainSelector)
+            )
+        );
+        hub.withdraw(assets, alice, alice);
 
-        // withdrawal is queued — reservedAssets > 0
-        assertGt(hub.reservedAssets(), 0);
+        // fail-closed — nothing committed
+        assertEq(hub.balanceOf(alice), shares, "shares untouched");
+        assertEq(hub.reservedAssets(), 0, "nothing reserved");
     }
 
     function test_findBestSpoke_singleSpoke() public {
-        // single spoke with real balance — Path 3 recalls from it
+        // single spoke with real balance and headroom — Path 3 recalls from it and settles
+        _addPath3Headroom();
         _setLastReportTimestamp(chainSelector, block.timestamp);
         _sendToSpoke(5_000e6);
 
@@ -376,5 +422,23 @@ contract WithdrawPath1Test is BaseHubTest {
 
         // recalled from real spoke — CCIP synchronous — should settle
         assertEq(hub.balanceOf(alice), 0);
+    }
+
+    /// @dev Parses recorded logs for SentToSpoke(uint64 indexed chainSelector, ...) and
+    /// returns the chain selectors in emission order.
+    function _sentToSpokeSelectors() internal returns (uint64[] memory) {
+        bytes32 sig = keccak256("SentToSpoke(uint64,bytes32,bytes32,uint256)");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint64[] memory result = new uint64[](logs.length);
+        uint256 count;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] != sig) continue;
+            result[count++] = uint64(uint256(logs[i].topics[1]));
+        }
+        uint64[] memory trimmed = new uint64[](count);
+        for (uint256 i = 0; i < count; i++) {
+            trimmed[i] = result[i];
+        }
+        return trimmed;
     }
 }

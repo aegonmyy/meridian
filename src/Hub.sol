@@ -202,6 +202,10 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
     ///      CONFIRM_WITHDRAWAL arrival, consistent with WI-4. Clamped at 0 — a spoke cannot
     ///      recall more than the hub believes it ever sent without that surplus itself being
     ///      yield, which the upside band below is what actually polices.
+    ///      FX-3: also REBASED (overwritten, not incremented) to the accepted value by
+    ///      acceptQuarantinedReport — the band is flat and time-blind, so without a durable
+    ///      rebase on accept, genuine cumulative yield eventually exceeds it permanently and
+    ///      every honest report after an accept would immediately re-quarantine.
     mapping(uint64 => uint256) public netSentToSpoke;
 
     /// @notice A quarantined self-reported balance awaiting owner review
@@ -1302,6 +1306,16 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
         uint256 amount = quarantinedReports[_chainSelector];
         if (amount == 0) revert NoQuarantinedReport();
         spokeBalances[_chainSelector] = amount;
+        // FX-3: rebase the band's baseline to the just-accepted value. The band
+        // (netSentToSpoke * (1 + MAX_YIELD_BPS) + REPORT_DUST) is flat and time-blind by
+        // design — without this, a spoke's genuine cumulative yield eventually exceeds it
+        // permanently (e.g. ~2 years at 10% APY with the default MAX_YIELD_BPS), and every
+        // subsequent HONEST report would quarantine again immediately after being accepted:
+        // a permanent pause/accept flap. Accepting is an attestation with a durable effect,
+        // not a one-off waiver — the owner just independently confirmed this balance is
+        // legitimate, so it becomes the new verified baseline the next report is measured
+        // against.
+        netSentToSpoke[_chainSelector] = amount;
         delete quarantinedReports[_chainSelector];
         if (activeQuarantineCount > 0) activeQuarantineCount -= 1;
         emit QuarantinedReportAccepted(_chainSelector, amount);

@@ -58,3 +58,9 @@ error NotWithdrawalOwner();
 
 /// @notice Thrown when cancelWithdrawal is called before WITHDRAWAL_TIMEOUT has elapsed
 error WithdrawalNotYetCancellable();
+
+/// @notice Thrown when reconcileTransit is called for a messageId with no tracked in-transit amount
+error NothingToReconcile();
+
+/// @notice Thrown when reconcileTransit is called before TRANSIT_RECONCILE_DELAY has elapsed
+error ReconcileTooEarly();

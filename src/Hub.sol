@@ -10,7 +10,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal, InsufficientUnreservedIdle, InvalidRecallAmount, InsufficientRecallLiquidity, NoPendingWithdrawal, NotWithdrawalOwner, WithdrawalNotYetCancellable} from "./errors/hubErrors.sol";
+import {InvalidMessageType, InvalidConstructorArguments, NotRebalancer, NotSpoke, ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, ZeroWithdrawal, InsufficientUnreservedIdle, InvalidRecallAmount, InsufficientRecallLiquidity, NoPendingWithdrawal, NotWithdrawalOwner, WithdrawalNotYetCancellable, NothingToReconcile, ReconcileTooEarly} from "./errors/hubErrors.sol";
 
 /// @title HubVault
 /// @notice ERC4626 vault on Ethereum — entry point for all user deposits and withdrawals.
@@ -158,6 +158,20 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     ///      Deleted after the callback is processed.
     mapping(bytes32 => uint256) public inTransitAmount;
 
+    /// @notice Maps CCIP messageId to the timestamp its DEPOSIT was sent
+    /// @dev WI-5 — set in _sendToSpoke alongside inTransitAmount, gates reconcileTransit's
+    ///      TRANSIT_RECONCILE_DELAY. Deleted alongside inTransitAmount on reconciliation.
+    mapping(bytes32 => uint256) public inTransitSince;
+
+    /// @notice Minimum age of a stuck in-transit leg before the owner may reconcile it
+    /// @dev WI-5 — replaces the removed adjustInTransitAssets. Operational order: attempt
+    ///      CCIP manual execution first; reconcile only when the message is provably dead
+    ///      (CCIP Explorer confirms permanent FAILURE and manual execution cannot recover
+    ///      it). The delay exists so a merely-slow (not dead) message isn't reconciled out
+    ///      from under a legitimate in-flight confirm.
+    // TUNE: default from the plan — Open Questions #1, not decided further here.
+    uint256 public constant TRANSIT_RECONCILE_DELAY = 7 days;
+
     /// @notice Gas limit supplied to the CCIP router for all outbound messages
     /// @dev Configurable by owner. Default 1_500_000 — covers the most expensive spoke
     ///      operations (deposit → adapter → CONFIRM_RECEIPT CCIP send).
@@ -246,6 +260,13 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
     /// @param chainSelector Chain selector the recall was sourced from
     /// @param amount Actual USDC amount that arrived (from the CCIP token envelope)
     event RecallCompleted(uint64 indexed chainSelector, uint256 amount);
+
+    /// @notice Emitted when a stuck in-transit DEPOSIT leg is reconciled by the owner
+    /// @dev WI-5. amount is exactly the tracked inTransitAmount for this id — the owner
+    ///      cannot invent or inflate a value.
+    /// @param messageId The reconciled leg's internal message id
+    /// @param amount The exact amount released from inTransitAssets
+    event TransitReconciled(bytes32 indexed messageId, uint256 amount);
 
     /// @notice Emitted when a Path 3 recall leg or stray token arrival matches no live
     ///         pendingWithdrawal — e.g. a leg for a withdrawal that already settled early
@@ -356,14 +377,29 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         outboundGasLimit = _gasLimit;
     }
 
-    /// @notice Emergency: manually correct inTransitAssets when CCIP messages fail
-    /// @dev Only use after CCIP Explorer confirms a message has FAILURE state and funds
-    ///      cannot be recovered via OffRamp manual execution.
-    ///      This does not move USDC — it only corrects Hub's accounting so share prices
-    ///      are not artificially inflated by stuck transit amounts.
-    /// @param _newAmount New inTransitAssets value — typically 0 after full failure recovery
-    function adjustInTransitAssets(uint256 _newAmount) external onlyOwner {
-        inTransitAssets = _newAmount;
+    /// @notice Releases a specific, aged, tracked in-transit leg whose CONFIRM_RECEIPT will
+    ///         provably never arrive (dead lane, spoke decommissioned, permanent CCIP failure)
+    /// @dev WI-5 — replaces the removed adjustInTransitAssets, which let the owner write
+    ///      inTransitAssets to ANY value with no evidence, bound, or delay — an unbounded
+    ///      write to a share-price input. This can only write down a SPECIFIC id by its
+    ///      EXACT tracked amount, and only after TRANSIT_RECONCILE_DELAY has passed since it
+    ///      was sent. It can never invent value or inflate the vault.
+    ///      Operational order: attempt CCIP manual execution first; call this only once the
+    ///      message is provably dead. A late CONFIRM_RECEIPT arriving after reconciliation
+    ///      is harmless — inTransitAmount[id] is already deleted, so
+    ///      `inTransitAssets -= inTransitAmount[id]` in _handleDepositCallback subtracts
+    ///      zero and only updates the spoke balance (see WI5 regression tests).
+    /// @param messageId The stuck DEPOSIT leg's internal message id
+    function reconcileTransit(bytes32 messageId) external onlyOwner {
+        uint256 amt = inTransitAmount[messageId];
+        if (amt == 0) revert NothingToReconcile();
+        if (block.timestamp < inTransitSince[messageId] + TRANSIT_RECONCILE_DELAY) {
+            revert ReconcileTooEarly();
+        }
+        inTransitAssets -= amt;
+        delete inTransitAmount[messageId];
+        delete inTransitSince[messageId];
+        emit TransitReconciled(messageId, amt);
     }
 
     /// @notice Registers a new spoke or updates an existing spoke's contract address
@@ -890,6 +926,7 @@ contract HUB is ERC4626, CCIPReceiver, Ownable {
         if (totalAmount > 0) {
             inTransitAssets += totalAmount;
             inTransitAmount[_message.messageId] = totalAmount;
+            inTransitSince[_message.messageId] = block.timestamp;
             IERC20(asset()).forceApprove(address(router), totalAmount);
         }
         LINK.forceApprove(address(router), fee);

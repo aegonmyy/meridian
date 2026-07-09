@@ -597,11 +597,24 @@ contract HUB is ERC4626, CCIPReceiver, Ownable, Pausable {
         if (spokes[_chainSelector].exists == false) revert SpokeNotFound();
         delete addressToSelector[spokes[_chainSelector].spoke];
         spokes[_chainSelector].exists = false;
+        // FX-5: the dangling values are preserved in the event below for the operator, then
+        // zeroed. Without this, re-registering this selector via addSpoke (e.g. pointing it
+        // at a freshly redeployed, or confirmed-safe, spoke contract) would instantly
+        // resurrect the OLD, possibly-compromised-or-drained balance into totalAssets() —
+        // the new spoke has reported nothing yet and shouldn't inherit its predecessor's
+        // number. inTransitToSpoke is zeroed for the same reason: those legs' confirms can
+        // never land once the spoke is force-removed (NotSpoke), so the counter would
+        // otherwise dangle forever and permanently block the safe removeSpoke path on any
+        // future re-add + re-remove cycle for this selector. Any tracked inTransitAmount
+        // legs remain independently reachable as reconcileTransit candidates, per the
+        // existing NatSpec on this function.
         emit SpokeForceRemoved(
             _chainSelector,
             spokeBalances[_chainSelector],
             inTransitToSpoke[_chainSelector]
         );
+        delete spokeBalances[_chainSelector];
+        delete inTransitToSpoke[_chainSelector];
     }
 
     /// @notice Returns whether an address is currently a valid active spoke

@@ -3,6 +3,7 @@ pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {SpokeVault} from "../../src/Spoke.sol";
+import {SpokeStorage} from "../../src/spoke/SpokeStorage.sol";
 //removed BurnMintERC677Helper
 import {IYieldSource} from "../../src/interfaces/IYieldSource.sol";
 import {CCIPLocalSimulator, IRouterClient, LinkToken} from "chainlink-local/ccip/CCIPLocalSimulator.sol";
@@ -87,7 +88,7 @@ contract spokeTest is Test {
 
     function test_setAdapter_emitsEvent() public {
         vm.expectEmit(true, true, false, false);
-        emit SpokeVault.AdapterSet(AAVE, address(aaveAdapter));
+        emit SpokeStorage.AdapterSet(AAVE, address(aaveAdapter));
         vm.prank(owner);
         spoke.setAdapter(AAVE, address(aaveAdapter));
     }
@@ -175,7 +176,7 @@ contract spokeTest is Test {
         vm.prank(owner);
         spoke.setAdapter(AAVE, address(aaveAdapter));
         vm.expectEmit(true, false, false, false);
-        emit SpokeVault.AdapterRemoved(AAVE);
+        emit SpokeStorage.AdapterRemoved(AAVE);
         vm.prank(owner);
         spoke.removeAdapter(AAVE);
     }

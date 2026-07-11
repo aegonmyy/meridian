@@ -1,0 +1,117 @@
+commit 9cba67b115da2ef15f05bb26c2e6672c9d18de45
+Author: Ubuntu <ubuntu@ip-172-31-23-203.ec2.internal>
+Date:   Sat Jul 11 10:56:33 2026 +0000
+
+    docs: D-3 withdrawals.md, the three-path engine in depth
+    
+    The deepest doc in the set. Covers path selection (idle coverage times
+    freshness), a mermaid sequence diagram for Path 3, claim time pricing and
+    why a frozen quote would socialize a stale price loss (worked example
+    with exact arithmetic including the ERC4626 virtual offset), multi leg
+    recall planning with the haircut and the fail closed
+    InsufficientRecallLiquidity revert, why destTokenAmounts is the only
+    number that counts on arrival, why every settlement gate lives inside
+    _attemptSettleWithdrawal instead of at its call sites, what unsticks a
+    deferred entry, cancellation as the universal 24 hour backstop, and the
+    user facing consequences: redeem and withdraw both end up repriced at
+    settlement, and expected latency per path.
+    
+    Every worked number checked against OpenZeppelin's actual _convertToShares
+    and _convertToAssets formulas, including the +1 virtual offset term, not
+    assumed round numbers.
+    
+    Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+diff --git a/docs/withdrawals.md b/docs/withdrawals.md
+new file mode 100644
+index 0000000..9f6b2e5
+--- /dev/null
++++ b/docs/withdrawals.md
+@@ -0,0 +1,87 @@
++# Withdrawals
++
++This is the deepest document in the set. It covers the three-path withdrawal engine end to end: how a withdrawal picks a path, why the payout price isn't fixed at request time, how a shortfall gets recalled from spokes, what arrival actually means, and what a user can do while waiting. Read [docs/architecture.md](architecture.md) first if you haven't, this document assumes you know what `totalAssets`, `spokeBalances`, and `inTransitAssets` mean.
++
++## Three paths, and what routes between them
++
++Every withdrawal starts the same way: shares move from the withdrawer to the hub contract itself, escrowed, not burned yet. Then the hub decides which of three paths applies, based on two questions. Does hub idle cover the requested amount? And if so, are all active spokes' balance reports fresh? <!-- verified: HubWithdrawalModule.sol:_withdraw, _transfer(owner, address(this), shares) happens before any path branches -->
++
++- **Path 1, synchronous.** Idle covers the amount, and every active spoke reported within the last `MAX_STALENESS` (1 hour). Settle immediately, in the same transaction as the request. No entry is ever created for this case.
++- **Path 2, async on staleness.** Idle covers the amount, but at least one spoke's report is stale. The hub queues the withdrawal, requests a fresh `REPORT_BALANCE` from every active spoke, and waits. Settlement happens once every spoke has reported fresh, whichever report happens to arrive last.
++- **Path 3, async on insufficient idle.** Idle alone can't cover the request. The hub plans a set of recall legs across active spokes, dispatches `WITHDRAW_AMOUNT` to each, and waits for all of them to arrive before settling.
++
++<!-- verified: HubWithdrawalModule.sol:_withdraw, the idleFree >= assets branch for Path 1/2 vs the fall-through to Path 3 planning -->
++
++```mermaid
++sequenceDiagram
++    participant U as User
++    participant H as Hub
++    participant S1 as Spoke A
++    participant S2 as Spoke B
++
++    U->>H: withdraw(assets, receiver, owner)
++    H->>H: escrow shares, idle < assets
++    H->>H: plan legs by descending spokeBalances, haircut capped
++    alt shortfall not fully coverable
++        H-->>U: revert InsufficientRecallLiquidity
++    else fully coverable
++        H->>H: reserve idle, create pendingWithdrawal, pendingLegs = N
++        H->>S1: WITHDRAW_AMOUNT (leg 1)
++        H->>S2: WITHDRAW_AMOUNT (leg 2)
++        S1-->>H: CONFIRM_WITHDRAWAL, tokens attached
++        H->>H: pendingLegs -= 1, attempt settlement (still 1 leg outstanding, defer)
++        S2-->>H: CONFIRM_WITHDRAWAL, tokens attached
++        H->>H: pendingLegs -= 1 (now 0), attempt settlement
++        H->>H: payout = previewRedeem(shares), burn shares
++        H->>U: transfer payout
++    end
++```
++<!-- verified: HubWithdrawalModule.sol:_withdraw (Path 3 planning and dispatch), HubMessagingModule.sol:_handleWithdrawalCallback (leg arrival), HubWithdrawalModule.sol:_attemptSettleWithdrawal (the pendingLegs == 0 gate) -->
++
++## Queue-time quote, claim-time payout, and why
++
++When a withdrawal is queued (Path 2 or Path 3), the hub records a `quotedAssets` value, `previewRedeem(shares)` at the moment of the request. That number is a reference for sizing the recall, not a promise. What the user actually receives is `previewRedeem(shares)` recomputed fresh at the moment settlement actually happens, which can be minutes later. <!-- verified: HubWithdrawalModule.sol:_withdraw, PendingWithdrawal.quotedAssets set at request time; HubWithdrawalModule.sol:_attemptSettleWithdrawal, uint256 payout = previewRedeem(entry.shares) recomputed at settlement -->
++
++The reason is what would happen under the alternative. Say the hub locked in the quote at request time and paid exactly that number whenever settlement eventually happened. Anything that changed share price in between, a spoke reporting a loss, a spoke reporting yield, another user's Path 3 recall draining idle, would be absorbed by everyone *except* the withdrawer whose price was frozen. A frozen quote in a system where settlement can take minutes is a standing invitation to arbitrage the gap between quote and settlement, and it socializes a stale-price loss onto whichever cohort of users happens to still be holding shares when the bad price gets discovered. Claim-time pricing means the withdrawer's payout tracks the same share price as everyone still in the vault, right up until the moment they're actually paid.
++
++**Worked example.** Bob requests a Path 2 withdrawal for 500 shares when `totalAssets() = 10,000e6` and `totalSupply() = 10,000e6` shares, a 1:1 price, so `quotedAssets = 500e6`. While the hub waits on stale spokes to report, one of them reports a loss, dropping `totalAssets()` to `9,500e6` with `totalSupply()` unchanged at `10,000e6`. When the last fresh report arrives and `_attemptSettleWithdrawal` runs, `previewRedeem(500e6 shares)` now computes to `500e6 * 9,500e6 / 10,000e6 = 475e6`. Bob receives 475, not the 500 he was quoted, and an event, `WithdrawalRepriced`, fires alongside `WithdrawalProcessed` specifically because the payout diverged from the quote. <!-- verified: HubWithdrawalModule.sol:_attemptSettleWithdrawal, emit WithdrawalRepriced(id, entry.quotedAssets, payout) fires only if payout != entry.quotedAssets -->
++
++## Multi-leg recall planning
++
++Path 3 doesn't pick one spoke to drain. It sorts active spokes by descending reported balance and greedily plans legs against them, largest balance first, until the shortfall is fully covered. <!-- verified: HubWithdrawalModule.sol:_spokesByDescendingBalance -->
++
++Each leg is capped, not at the spoke's full reported balance, but at `(spokeBalance * (10,000 - RECALL_HAIRCUT_BPS)) / 10,000`. `RECALL_HAIRCUT_BPS` is 50, half a percent. <!-- verified: HubStorage.sol:RECALL_HAIRCUT_BPS = 50 -->  The haircut exists because a spoke's reported balance can be up to `MAX_STALENESS` old by the time a recall is planned against it. Asking a spoke for its full self-reported balance risks the recall arriving short if the real balance had already dropped slightly since the report, from normal yield-market fluctuation or an intervening operation the hub hasn't heard about yet. Half a percent of margin against a one-hour-old number is cheap insurance against a leg silently under-delivering.
++
++Planning is a pure dry run first. Before any state changes and before any CCIP message goes out, the hub walks the same sorted list and sums up what's coverable under the haircut cap. If the full shortfall can't be planned even across every active spoke, the entire call reverts with `InsufficientRecallLiquidity`, fail closed. Nothing is locked, no shares are escrowed, the user simply can't withdraw that amount right now. Only once the dry run confirms full coverage does the hub commit: reserve the available idle, write the `pendingWithdrawal` entry with the final leg count, and only then start dispatching. <!-- verified: HubWithdrawalModule.sol:_withdraw, the two-pass structure, first loop computes remaining and legCount without touching state, second loop (after the InsufficientRecallLiquidity check) actually reserves and dispatches -->
++
++## What arrival means
++
++When a recall leg's `CONFIRM_WITHDRAWAL` arrives, the hub never trusts the message payload's claimed amount. It reads `destTokenAmounts`, the actual token envelope CCIP delivered, and that's the number credited to the pending withdrawal's `arrivedAssets` and the number that decrements the hub's internal ledger of what it believes it ever sent to that spoke. The payload can say whatever it wants, only the delivered tokens count. <!-- verified: HubMessagingModule.sol:_handleWithdrawalCallback, uint256 actualAmount = destTokenAmounts.length > 0 ? destTokenAmounts[0].amount : 0 -->
++
++Every leg's arrival is one attempt to close out the pending withdrawal, not a guaranteed settlement. `pendingLegs` decrements, and settlement is attempted, but settlement itself is gated (see below) and can still defer even after the last leg lands, if idle solvency doesn't line up yet.
++
++## Why the gates live inside `_attemptSettleWithdrawal`
++
++`attemptSettlement` is a permissionless external function, anyone can call it to nudge a pending withdrawal along. That's deliberate, it lets the CCIP callback handlers trigger settlement via `try`/`catch` without letting a settlement failure poison a token-carrying CCIP execution, and it lets a stuck withdrawal be nudged by any interested party. But a permissionless entry point into settlement is also a way to try to jump the queue: call it the instant a Path 2 withdrawal is queued, before any fresh report has landed, and settle at the stale price that motivated queuing in the first place.
++
++The fix is that every gate, freshness for Path 2, `pendingLegs == 0` for Path 3, solvency for both, lives inside `_attemptSettleWithdrawal` itself, not at the call sites that trigger it. It doesn't matter whether the caller is the permissionless `attemptSettlement`, a CCIP callback, or anything else, the same checks apply every time. Classification between "is this a Path 2 or Path 3 entry" needs no separate flag either, it's derived purely from stored state: an entry with `pendingLegs > 0 || arrivedAssets > 0` was routed through Path 3, everything else is Path 2. <!-- verified: HubWithdrawalModule.sol:_attemptSettleWithdrawal, bool isPathThreeEntry = entry.pendingLegs > 0 || entry.arrivedAssets > 0 -->
++
++Solvency is checked last, and it's scoped tightly: idle currently claimable by *this* entry alone, total idle minus what every other pending entry has already reserved, must cover the payout. It never dips into another withdrawer's reservation to pay this one. <!-- verified: HubWithdrawalModule.sol:_attemptSettleWithdrawal, uint256 reservedByOthers = reservedAssets - entry.reservedIdle -->
++
++## Deferral, and what unsticks it
++
++If any gate fails, `_attemptSettleWithdrawal` doesn't revert, it emits `SettlementDeferred` and returns. Reverting here would be dangerous, because this function is called from inside CCIP arrival callbacks, and a revert there would poison a token-carrying execution that already delivered real funds. The entry simply stays pending. <!-- verified: HubWithdrawalModule.sol:_attemptSettleWithdrawal, three separate emit SettlementDeferred / return pairs, no revert path -->
++
++What unsticks a deferred entry depends on why it deferred. A Path 2 entry waiting on freshness unsticks the next time any spoke reports, since every report re-checks `_allSpokesFresh()` and retries settlement automatically. A Path 3 entry waiting on legs unsticks as each leg arrives. An entry deferred purely on solvency, everything else ready but idle temporarily insufficient, needs another nudge: any subsequent leg arrival, report arrival, or a direct permissionless call to `attemptSettlement` will retry it.
++
++## Cancellation, the universal backstop
++
++`cancelWithdrawal` exists for the case where nothing above unsticks things in a reasonable time, a spoke stops reporting entirely, a recall leg never arrives. After `WITHDRAWAL_TIMEOUT`, 24 hours, has elapsed since the request, the owner of the pending withdrawal (and only that owner) can cancel it themselves, no owner or admin action required. <!-- verified: HubStorage.sol:WITHDRAWAL_TIMEOUT = 24 hours, HubWithdrawalModule.sol:cancelWithdrawal -->
++
++Cancelling releases the reservation and returns the escrowed shares. It does not, and cannot, claw back any leg that already arrived before cancellation, those funds are already ordinary hub idle, and the user got their shares back, so they still hold a proportional claim on that idle through the shares themselves. If a leg arrives *after* cancellation, the arrival callback still resolves the `legToWithdrawal` lookup correctly, since that mapping is never deleted, but finds `pendingWithdrawals[id].shares == 0` and routes the funds to the orphaned-arrival path instead, emitting `OrphanedRecallArrival` and letting the tokens land as ordinary idle. No special-cased late-arrival handling is needed at the callback site, the existing "is this a live pending withdrawal" check already covers it. <!-- verified: HubWithdrawalModule.sol:cancelWithdrawal, HubMessagingModule.sol:_handleWithdrawalCallback, the pendingWithdrawals[wid].shares > 0 branch vs the else emitting OrphanedRecallArrival -->
++
++## What this means for a user
++
++**`redeem` and `withdraw` both end up here, and both quote, then reprice.** Meridian's `_withdraw` override ignores the `assets` argument entirely and recomputes `previewRedeem(shares)` internally, regardless of whether the caller went through `withdraw(assets, ...)` or `redeem(shares, ...)`. If you call `withdraw`, the outer ERC4626 function first converts your requested assets to shares via `previewWithdraw` (which rounds up), then Meridian's override converts those shares back to assets via `previewRedeem` (which rounds down). In the same block, with no price movement, that round trip lands you very close to what you asked for, off by rounding dust at most. Across a Path 2 or Path 3 delay, it can differ by whatever the vault's price actually did in the meantime, same as the Bob example above. Either way: what you request is a target, not a promise. What you receive is priced at settlement. <!-- verified: HubWithdrawalModule.sol:_withdraw, assets = previewRedeem(shares) overwrites the incoming parameter unconditionally; lib/openzeppelin-contracts ERC4626.sol:withdraw and :redeem both funnel into the same _withdraw -->
++
++**Expected latency by path.** Path 1 is one transaction, instant. Path 2 waits on however long it takes every active spoke to respond to a `REPORT_BALANCE` request, one CCIP round trip per spoke, so realistically tens of minutes depending on how many spokes are registered and how CCIP is performing. Path 3 waits on however many legs were planned, each its own CCIP round trip, dispatched in parallel but each independently subject to CCIP timing. Neither path has a hard upper bound beyond the 24 hour cancellation backstop, that's the number to plan around if you need a worst-case guarantee.

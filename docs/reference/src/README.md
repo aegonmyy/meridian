@@ -107,7 +107,6 @@ Deployment scripts live in `script/`, `DeployTestnet.s.sol` for the live testnet
 | [docs/operations.md](docs/operations.md) | Operational runbook items, in-transit reconciliation, confirm retries |
 | [docs/revert-audit.md](docs/revert-audit.md) | The systematic revert-path review that motivated the defensive receiver pattern |
 | [docs/reference/](docs/reference/) | Generated API reference (forge doc output), regenerated from NatSpec, not hand-edited |
-| [docs/docs-findings.md](docs/docs-findings.md) | Discrepancies found between code and documented behavior while writing this doc set, not fixed here, flagged for review |
 
 ## Testnet deployments
 

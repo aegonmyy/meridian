@@ -1,0 +1,173 @@
+{
+  "storage": [
+    {
+      "astId": 274,
+      "contract": "src/Spoke.sol:SpokeVault",
+      "label": "_owner",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_address"
+    },
+    {
+      "astId": 1154,
+      "contract": "src/Spoke.sol:SpokeVault",
+      "label": "HUB",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_address"
+    },
+    {
+      "astId": 1171,
+      "contract": "src/Spoke.sol:SpokeVault",
+      "label": "adapters",
+      "offset": 0,
+      "slot": "2",
+      "type": "t_mapping(t_bytes32,t_struct(AdapterInfo)1128_storage)"
+    },
+    {
+      "astId": 1175,
+      "contract": "src/Spoke.sol:SpokeVault",
+      "label": "activeAdapters",
+      "offset": 0,
+      "slot": "3",
+      "type": "t_array(t_bytes32)dyn_storage"
+    },
+    {
+      "astId": 1180,
+      "contract": "src/Spoke.sol:SpokeVault",
+      "label": "pendingConfirms",
+      "offset": 0,
+      "slot": "4",
+      "type": "t_array(t_struct(PendingConfirm)1151_storage)dyn_storage"
+    },
+    {
+      "astId": 1183,
+      "contract": "src/Spoke.sol:SpokeVault",
+      "label": "unresolvedConfirmCount",
+      "offset": 0,
+      "slot": "5",
+      "type": "t_uint256"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_array(t_bytes32)dyn_storage": {
+      "encoding": "dynamic_array",
+      "label": "bytes32[]",
+      "numberOfBytes": "32",
+      "base": "t_bytes32"
+    },
+    "t_array(t_struct(PendingConfirm)1151_storage)dyn_storage": {
+      "encoding": "dynamic_array",
+      "label": "struct SpokeVault.PendingConfirm[]",
+      "numberOfBytes": "32",
+      "base": "t_struct(PendingConfirm)1151_storage"
+    },
+    "t_bool": {
+      "encoding": "inplace",
+      "label": "bool",
+      "numberOfBytes": "1"
+    },
+    "t_bytes32": {
+      "encoding": "inplace",
+      "label": "bytes32",
+      "numberOfBytes": "32"
+    },
+    "t_contract(IYieldSource)2811": {
+      "encoding": "inplace",
+      "label": "contract IYieldSource",
+      "numberOfBytes": "20"
+    },
+    "t_enum(MessageType)2823": {
+      "encoding": "inplace",
+      "label": "enum CCIPHelpers.MessageType",
+      "numberOfBytes": "1"
+    },
+    "t_mapping(t_bytes32,t_struct(AdapterInfo)1128_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct SpokeVault.AdapterInfo)",
+      "numberOfBytes": "32",
+      "value": "t_struct(AdapterInfo)1128_storage"
+    },
+    "t_struct(AdapterInfo)1128_storage": {
+      "encoding": "inplace",
+      "label": "struct SpokeVault.AdapterInfo",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "astId": 1121,
+          "contract": "src/Spoke.sol:SpokeVault",
+          "label": "adapter",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_contract(IYieldSource)2811"
+        },
+        {
+          "astId": 1124,
+          "contract": "src/Spoke.sol:SpokeVault",
+          "label": "exists",
+          "offset": 20,
+          "slot": "0",
+          "type": "t_bool"
+        },
+        {
+          "astId": 1127,
+          "contract": "src/Spoke.sol:SpokeVault",
+          "label": "everRegistered",
+          "offset": 21,
+          "slot": "0",
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_struct(PendingConfirm)1151_storage": {
+      "encoding": "inplace",
+      "label": "struct SpokeVault.PendingConfirm",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "astId": 1141,
+          "contract": "src/Spoke.sol:SpokeVault",
+          "label": "messageType",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_enum(MessageType)2823"
+        },
+        {
+          "astId": 1144,
+          "contract": "src/Spoke.sol:SpokeVault",
+          "label": "messageId",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_bytes32"
+        },
+        {
+          "astId": 1147,
+          "contract": "src/Spoke.sol:SpokeVault",
+          "label": "actualAmount",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 1150,
+          "contract": "src/Spoke.sol:SpokeVault",
+          "label": "resolved",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}

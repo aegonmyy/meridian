@@ -3,6 +3,7 @@ pragma solidity 0.8.33;
 
 import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
 import {HUB} from "../../src/Hub.sol";
+import {HubStorage} from "../../src/hub/HubStorage.sol";
 import {NoPendingWithdrawal, NotWithdrawalOwner, WithdrawalNotYetCancellable} from "../../src/errors/hubErrors.sol";
 import {Vm} from "forge-std/Vm.sol";
 
@@ -169,7 +170,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
         deal(address(usdc), address(freshHub), 10_000e6);
 
         vm.expectEmit(true, false, false, false);
-        emit HUB.SettlementDeferred(aliceId, 0, 0);
+        emit HubStorage.SettlementDeferred(aliceId, 0, 0);
         freshHub.attemptSettlement(aliceId);
 
         // entry must still be pending — non-reverting, no funds moved

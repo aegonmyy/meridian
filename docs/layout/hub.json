@@ -1,0 +1,435 @@
+{
+  "storage": [
+    {
+      "astId": 833,
+      "contract": "src/Hub.sol:HUB",
+      "label": "_balances",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_mapping(t_address,t_uint256)"
+    },
+    {
+      "astId": 839,
+      "contract": "src/Hub.sol:HUB",
+      "label": "_allowances",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_mapping(t_address,t_mapping(t_address,t_uint256))"
+    },
+    {
+      "astId": 841,
+      "contract": "src/Hub.sol:HUB",
+      "label": "_totalSupply",
+      "offset": 0,
+      "slot": "2",
+      "type": "t_uint256"
+    },
+    {
+      "astId": 843,
+      "contract": "src/Hub.sol:HUB",
+      "label": "_name",
+      "offset": 0,
+      "slot": "3",
+      "type": "t_string_storage"
+    },
+    {
+      "astId": 845,
+      "contract": "src/Hub.sol:HUB",
+      "label": "_symbol",
+      "offset": 0,
+      "slot": "4",
+      "type": "t_string_storage"
+    },
+    {
+      "astId": 274,
+      "contract": "src/Hub.sol:HUB",
+      "label": "_owner",
+      "offset": 0,
+      "slot": "5",
+      "type": "t_address"
+    },
+    {
+      "astId": 3217,
+      "contract": "src/Hub.sol:HUB",
+      "label": "_paused",
+      "offset": 20,
+      "slot": "5",
+      "type": "t_bool"
+    },
+    {
+      "astId": 6857,
+      "contract": "src/Hub.sol:HUB",
+      "label": "REBALANCER",
+      "offset": 0,
+      "slot": "6",
+      "type": "t_address"
+    },
+    {
+      "astId": 6861,
+      "contract": "src/Hub.sol:HUB",
+      "label": "spokeChainSelectors",
+      "offset": 0,
+      "slot": "7",
+      "type": "t_array(t_uint64)dyn_storage"
+    },
+    {
+      "astId": 6864,
+      "contract": "src/Hub.sol:HUB",
+      "label": "reservedAssets",
+      "offset": 0,
+      "slot": "8",
+      "type": "t_uint256"
+    },
+    {
+      "astId": 6870,
+      "contract": "src/Hub.sol:HUB",
+      "label": "spokes",
+      "offset": 0,
+      "slot": "9",
+      "type": "t_mapping(t_uint64,t_struct(SpokeInfo)6850_storage)"
+    },
+    {
+      "astId": 6875,
+      "contract": "src/Hub.sol:HUB",
+      "label": "addressToSelector",
+      "offset": 0,
+      "slot": "10",
+      "type": "t_mapping(t_address,t_uint64)"
+    },
+    {
+      "astId": 6880,
+      "contract": "src/Hub.sol:HUB",
+      "label": "spokeBalances",
+      "offset": 0,
+      "slot": "11",
+      "type": "t_mapping(t_uint64,t_uint256)"
+    },
+    {
+      "astId": 6885,
+      "contract": "src/Hub.sol:HUB",
+      "label": "lastReportTimestamp",
+      "offset": 0,
+      "slot": "12",
+      "type": "t_mapping(t_uint64,t_uint256)"
+    },
+    {
+      "astId": 6891,
+      "contract": "src/Hub.sol:HUB",
+      "label": "pendingWithdrawals",
+      "offset": 0,
+      "slot": "13",
+      "type": "t_mapping(t_bytes32,t_struct(PendingWithdrawal)6831_storage)"
+    },
+    {
+      "astId": 6896,
+      "contract": "src/Hub.sol:HUB",
+      "label": "legToWithdrawal",
+      "offset": 0,
+      "slot": "14",
+      "type": "t_mapping(t_bytes32,t_bytes32)"
+    },
+    {
+      "astId": 6911,
+      "contract": "src/Hub.sol:HUB",
+      "label": "inTransitAssets",
+      "offset": 0,
+      "slot": "15",
+      "type": "t_uint256"
+    },
+    {
+      "astId": 6916,
+      "contract": "src/Hub.sol:HUB",
+      "label": "inTransitAmount",
+      "offset": 0,
+      "slot": "16",
+      "type": "t_mapping(t_bytes32,t_uint256)"
+    },
+    {
+      "astId": 6922,
+      "contract": "src/Hub.sol:HUB",
+      "label": "transitLegs",
+      "offset": 0,
+      "slot": "17",
+      "type": "t_mapping(t_bytes32,t_struct(TransitLeg)6839_storage)"
+    },
+    {
+      "astId": 6931,
+      "contract": "src/Hub.sol:HUB",
+      "label": "inTransitToSpoke",
+      "offset": 0,
+      "slot": "18",
+      "type": "t_mapping(t_uint64,t_uint256)"
+    },
+    {
+      "astId": 6936,
+      "contract": "src/Hub.sol:HUB",
+      "label": "netSentToSpoke",
+      "offset": 0,
+      "slot": "19",
+      "type": "t_mapping(t_uint64,t_uint256)"
+    },
+    {
+      "astId": 6941,
+      "contract": "src/Hub.sol:HUB",
+      "label": "quarantinedReports",
+      "offset": 0,
+      "slot": "20",
+      "type": "t_mapping(t_uint64,t_uint256)"
+    },
+    {
+      "astId": 6944,
+      "contract": "src/Hub.sol:HUB",
+      "label": "activeQuarantineCount",
+      "offset": 0,
+      "slot": "21",
+      "type": "t_uint256"
+    },
+    {
+      "astId": 6960,
+      "contract": "src/Hub.sol:HUB",
+      "label": "outboundGasLimit",
+      "offset": 0,
+      "slot": "22",
+      "type": "t_uint32"
+    },
+    {
+      "astId": 6963,
+      "contract": "src/Hub.sol:HUB",
+      "label": "_messageNonce",
+      "offset": 0,
+      "slot": "23",
+      "type": "t_uint256"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_array(t_uint64)dyn_storage": {
+      "encoding": "dynamic_array",
+      "label": "uint64[]",
+      "numberOfBytes": "32",
+      "base": "t_uint64"
+    },
+    "t_bool": {
+      "encoding": "inplace",
+      "label": "bool",
+      "numberOfBytes": "1"
+    },
+    "t_bytes32": {
+      "encoding": "inplace",
+      "label": "bytes32",
+      "numberOfBytes": "32"
+    },
+    "t_mapping(t_address,t_mapping(t_address,t_uint256))": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => mapping(address => uint256))",
+      "numberOfBytes": "32",
+      "value": "t_mapping(t_address,t_uint256)"
+    },
+    "t_mapping(t_address,t_uint256)": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => uint256)",
+      "numberOfBytes": "32",
+      "value": "t_uint256"
+    },
+    "t_mapping(t_address,t_uint64)": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => uint64)",
+      "numberOfBytes": "32",
+      "value": "t_uint64"
+    },
+    "t_mapping(t_bytes32,t_bytes32)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => bytes32)",
+      "numberOfBytes": "32",
+      "value": "t_bytes32"
+    },
+    "t_mapping(t_bytes32,t_struct(PendingWithdrawal)6831_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct HUB.PendingWithdrawal)",
+      "numberOfBytes": "32",
+      "value": "t_struct(PendingWithdrawal)6831_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(TransitLeg)6839_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct HUB.TransitLeg)",
+      "numberOfBytes": "32",
+      "value": "t_struct(TransitLeg)6839_storage"
+    },
+    "t_mapping(t_bytes32,t_uint256)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => uint256)",
+      "numberOfBytes": "32",
+      "value": "t_uint256"
+    },
+    "t_mapping(t_uint64,t_struct(SpokeInfo)6850_storage)": {
+      "encoding": "mapping",
+      "key": "t_uint64",
+      "label": "mapping(uint64 => struct HUB.SpokeInfo)",
+      "numberOfBytes": "32",
+      "value": "t_struct(SpokeInfo)6850_storage"
+    },
+    "t_mapping(t_uint64,t_uint256)": {
+      "encoding": "mapping",
+      "key": "t_uint64",
+      "label": "mapping(uint64 => uint256)",
+      "numberOfBytes": "32",
+      "value": "t_uint256"
+    },
+    "t_string_storage": {
+      "encoding": "bytes",
+      "label": "string",
+      "numberOfBytes": "32"
+    },
+    "t_struct(PendingWithdrawal)6831_storage": {
+      "encoding": "inplace",
+      "label": "struct HUB.PendingWithdrawal",
+      "numberOfBytes": "192",
+      "members": [
+        {
+          "astId": 6809,
+          "contract": "src/Hub.sol:HUB",
+          "label": "shares",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 6812,
+          "contract": "src/Hub.sol:HUB",
+          "label": "quotedAssets",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 6815,
+          "contract": "src/Hub.sol:HUB",
+          "label": "reservedIdle",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 6818,
+          "contract": "src/Hub.sol:HUB",
+          "label": "arrivedAssets",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 6821,
+          "contract": "src/Hub.sol:HUB",
+          "label": "pendingLegs",
+          "offset": 0,
+          "slot": "4",
+          "type": "t_uint32"
+        },
+        {
+          "astId": 6824,
+          "contract": "src/Hub.sol:HUB",
+          "label": "requestedAt",
+          "offset": 4,
+          "slot": "4",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 6827,
+          "contract": "src/Hub.sol:HUB",
+          "label": "receiver",
+          "offset": 12,
+          "slot": "4",
+          "type": "t_address"
+        },
+        {
+          "astId": 6830,
+          "contract": "src/Hub.sol:HUB",
+          "label": "owner",
+          "offset": 0,
+          "slot": "5",
+          "type": "t_address"
+        }
+      ]
+    },
+    "t_struct(SpokeInfo)6850_storage": {
+      "encoding": "inplace",
+      "label": "struct HUB.SpokeInfo",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "astId": 6843,
+          "contract": "src/Hub.sol:HUB",
+          "label": "spoke",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_address"
+        },
+        {
+          "astId": 6846,
+          "contract": "src/Hub.sol:HUB",
+          "label": "exists",
+          "offset": 20,
+          "slot": "0",
+          "type": "t_bool"
+        },
+        {
+          "astId": 6849,
+          "contract": "src/Hub.sol:HUB",
+          "label": "everRegistered",
+          "offset": 21,
+          "slot": "0",
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_struct(TransitLeg)6839_storage": {
+      "encoding": "inplace",
+      "label": "struct HUB.TransitLeg",
+      "numberOfBytes": "32",
+      "members": [
+        {
+          "astId": 6835,
+          "contract": "src/Hub.sol:HUB",
+          "label": "selector",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_uint64"
+        },
+        {
+          "astId": 6838,
+          "contract": "src/Hub.sol:HUB",
+          "label": "sentAt",
+          "offset": 8,
+          "slot": "0",
+          "type": "t_uint64"
+        }
+      ]
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "t_uint32": {
+      "encoding": "inplace",
+      "label": "uint32",
+      "numberOfBytes": "4"
+    },
+    "t_uint64": {
+      "encoding": "inplace",
+      "label": "uint64",
+      "numberOfBytes": "8"
+    }
+  }
+}

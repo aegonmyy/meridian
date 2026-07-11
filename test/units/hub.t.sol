@@ -3,6 +3,7 @@ pragma solidity 0.8.33;
 
 import {Test} from "forge-std/Test.sol";
 import {HUB} from "../../src/Hub.sol";
+import {HubStorage} from "../../src/hub/HubStorage.sol";
 import {CCIPLocalSimulator, IRouterClient, LinkToken} from "chainlink-local/ccip/CCIPLocalSimulator.sol";
 import {Asset} from "../mocks/Asset.sol";
 //import {MockYieldSource} from "../mocks/mockYield.sol";
@@ -109,7 +110,7 @@ contract HUBTest is Test {
 
     function test_addSpoke_emitsEvent() public {
         vm.expectEmit(true, true, false, false);
-        emit HUB.SpokeAdded(ARBITRUM_SELECTOR, arbitrumSpoke);
+        emit HubStorage.SpokeAdded(ARBITRUM_SELECTOR, arbitrumSpoke);
 
         vm.prank(owner);
         hub.addSpoke(ARBITRUM_SELECTOR, arbitrumSpoke);
@@ -194,7 +195,7 @@ contract HUBTest is Test {
         hub.addSpoke(ARBITRUM_SELECTOR, arbitrumSpoke);
 
         vm.expectEmit(true, false, false, false);
-        emit HUB.SpokeRemoved(ARBITRUM_SELECTOR);
+        emit HubStorage.SpokeRemoved(ARBITRUM_SELECTOR);
 
         vm.prank(owner);
         hub.removeSpoke(ARBITRUM_SELECTOR);

@@ -10,7 +10,7 @@ RECONCILE.
 
 **Core CCIP fact this audit relies on:** a revert anywhere inside `_ccipReceive` unwinds the
 *entire* destination execution, including the token release/mint that happened earlier in the
-same call frame. So any revert after tokens have logically "arrived" doesn't strand funds in the
+same call frame. So any revert after tokens have logically "arrived" does not strand funds in the
 receiving contract, it strands them in CCIP limbo (the message sits FAILURE, retryable only via
 manual execution, and permanently stuck if the condition is deterministic).
 

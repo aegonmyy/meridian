@@ -84,13 +84,13 @@ spoke. A spoke can go permanently stale for reasons that have nothing to do with
 a redeployed spoke contract nobody re-registered, a decommissioned L2, or simply an operator
 who stopped triggering `REPORT_BALANCE` refreshes.
 
-If a spoke is stuck stale and it's blocking Path 2 for the whole vault, the decision sequence
+If a spoke is stuck stale and is blocking Path 2 for the whole vault, the decision sequence
 is:
 
 1. **Diagnose first.** Is the spoke still solvent and reachable (just not reporting), or is it
    genuinely dead? Check `lastReportTimestamp(selector)` and attempt a manual
    `_requestAllBalanceReports` round-trip (via any Path 2 withdrawal, or a dedicated
-   maintenance call) before assuming it's unrecoverable.
+   maintenance call) before assuming it is unrecoverable.
 2. **If reachable but not reporting:** fix whatever is preventing its `REPORT_BALANCE`
    response (LINK balance on the spoke, `retryConfirm` if a confirm is queued). This is the
    cheapest fix and requires no hub-side state changes.
@@ -119,7 +119,7 @@ those just-recalled funds in `totalAssets()` (once as hub idle, once as the stal
 balance) until the next legitimate report corrects it.
 
 **Operator action: after any `rejectQuarantinedReport`, force a fresh report promptly** rather
-than waiting for organic traffic to trigger one, don't leave `totalAssets()` overstated for
+than waiting for organic traffic to trigger one, do not leave `totalAssets()` overstated for
 however long it takes the next natural `REPORT_BALANCE`/`CONFIRM_*` message to arrive. A small
 `Rebalancer.recallFromSpoke` round-trip (even a nominal amount) is the fastest way to force a
 fresh, accurate report back from the spoke.

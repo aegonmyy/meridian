@@ -1,17 +1,17 @@
 # Meridian
 
-Meridian is a cross-chain USDC yield vault. Users deposit into an ERC4626 vault on Ethereum (the hub), and their capital gets deployed into Aave, Compound, and Morpho across three L2s (the spokes) via Chainlink CCIP. Users never touch the spokes directly, they hold one share token that tracks value across every chain and every market the protocol is deployed into.
+Meridian is a cross-chain USDC yield vault. Users deposit into an ERC4626 vault on Ethereum (the hub); capital is deployed into Aave, Compound, and Morpho across three L2s (the spokes) via Chainlink CCIP. Spokes are not directly accessible to users, who hold a single share token representing proportional value across every chain and market in which the protocol is deployed.
 
-Status: testnet, unaudited. This is a capability demonstration, not a live product. Treat every number and every guarantee below as something to verify against the code, not as a promise.
+Status: testnet, unaudited. This is a capability demonstration, not a production deployment. Every figure and guarantee stated below should be verified against the code; none constitutes a promise.
 
-## What's interesting here
+## Design highlights
 
-- **A three-path async withdrawal engine with claim-time pricing.** Most of the time a withdrawal is instant. When it isn't, because a spoke report is stale or idle cash on the hub can't cover it, the payout is priced at the moment it actually settles, not the moment it was requested. See [docs/withdrawals.md](docs/withdrawals.md).
-- **A failure-first CCIP design.** Every inbound message handler assumes a partner adapter can revert, a confirm can fail to send, and a transit leg can go dark. Nothing here trusts happy-path delivery. See [docs/resilience.md](docs/resilience.md).
-- **A spoke report sanity band with a quarantine circuit breaker.** A spoke that reports an implausibly large balance gets quarantined instead of trusted, and the vault pauses new deposits and withdrawal requests until an owner resolves it. See [docs/security.md](docs/security.md).
-- **Collision-free message identity.** Every cross-chain message id comes from a monotonic nonce, not from hashing message content, so two operations in the same block never collide. See [docs/resilience.md](docs/resilience.md).
-- **A storage-preserving module split.** Hub and Spoke were each refactored from one large contract into a storage base plus sibling logic modules, with every storage slot verified unchanged before and after. See [docs/architecture.md](docs/architecture.md).
-- **A test suite built to catch exactly this kind of thing.** Invariant fuzzing, slot-pinned regression tests that would break if storage layout ever shifted, and a mainnet-fork integration suite. See [docs/development.md](docs/development.md).
+- **A three-path asynchronous withdrawal engine with claim-time pricing.** Withdrawals settle immediately when idle balance and spoke freshness permit; otherwise, the payout is computed at settlement rather than at request time. See [docs/withdrawals.md](docs/withdrawals.md).
+- **A failure-first CCIP design.** Every inbound message handler assumes that a partner adapter may revert, a confirm may fail to send, and a transit leg may fail to arrive. No component assumes successful delivery. See [docs/resilience.md](docs/resilience.md).
+- **A spoke report sanity band with a quarantine circuit breaker.** A spoke report exceeding the configured ceiling is quarantined rather than applied; the vault pauses new deposits and withdrawal requests until the owner resolves the quarantine. See [docs/security.md](docs/security.md).
+- **Collision-free message identity.** Message identifiers are derived from a monotonic nonce rather than from message content, precluding collision between operations in the same block. See [docs/resilience.md](docs/resilience.md).
+- **A storage-preserving module split.** The Hub and Spoke contracts were each refactored from a single monolithic contract into a storage base and sibling logic modules; storage layout was verified unchanged before and after the refactor. See [docs/architecture.md](docs/architecture.md).
+- **An invariant and regression test suite.** Invariant fuzzing, slot-pinned regression tests that detect storage layout drift, and a mainnet-fork integration suite. See [docs/development.md](docs/development.md).
 
 ## Architecture
 
@@ -54,11 +54,11 @@ graph TB
 ```
 <!-- verified: CCIPHelpers.sol:MessageType for the message names on each edge; HubMessagingModule.sol and SpokeHandlersModule.sol for direction; src/adapters/ for the three adapter contracts; strategy.js:MARKETS.optimism.protocols for Optimism lacking Morpho -->
 
-The hub is the single accounting authority. It holds no strategy logic of its own, it just knows how much USDC is idle, how much is mid-flight, and what each spoke last reported. Spokes are execution arms: they hold no user-facing accounting, they just do what the hub tells them and report back. See [docs/architecture.md](docs/architecture.md) for why this split, not something else.
+The hub is the single accounting authority. It contains no strategy logic; it tracks idle USDC, in-transit USDC, and each spoke's last reported balance. Spokes are execution arms: they hold no user-facing accounting and execute instructions received from the hub, reporting balances in return. See [docs/architecture.md](docs/architecture.md) for the rationale behind this topology.
 
-## Repo map
+## Repository map
 
-| Path | What's there |
+| Path | Description |
 |---|---|
 | `src/hub/` | Hub storage base plus the three sibling modules (admin, messaging, withdrawal) that make up `HUB` |
 | `src/spoke/` | Spoke storage base plus the three sibling modules (admin, handlers, confirms) that make up `SpokeVault` |
@@ -81,9 +81,9 @@ forge build
 forge test
 ```
 
-If you cloned without `--recurse-submodules`, run `git submodule update --init --recursive` before building.
+If the repository is cloned without `--recurse-submodules`, submodules must be initialized before building: `git submodule update --init --recursive`.
 
-The full suite runs without any network access except one test, `test/integration/FullFlowTest.t.sol`, which forks live Ethereum and Arbitrum mainnet state and needs `ETH_RPC_URL` and `ARBITRUM_RPC_URL` set. Without them that one test fails at `setUp()` and every other test still passes. <!-- verified: FullFlowTest.t.sol:setUp, vm.envString("ETH_RPC_URL") -->
+The full suite runs without any network access except one test, `test/integration/FullFlowTest.t.sol`, which forks live Ethereum and Arbitrum mainnet state and requires `ETH_RPC_URL` and `ARBITRUM_RPC_URL`. Absent those variables, that test fails at `setUp()`; every other test still passes. <!-- verified: FullFlowTest.t.sol:setUp, vm.envString("ETH_RPC_URL") -->
 
 ```bash
 export ETH_RPC_URL=https://your-mainnet-rpc
@@ -91,27 +91,27 @@ export ARBITRUM_RPC_URL=https://your-arbitrum-rpc
 forge test --match-contract FullFlowTest -vvv
 ```
 
-Deployment scripts live in `script/`, `DeployTestnet.s.sol` for the live testnet deployment below, `DeployForkSimulation.s.sol` for local fork-based rehearsal. See [docs/development.md](docs/development.md) for the full build, test, and deploy walkthrough.
+Deployment scripts reside in `script/`: `DeployTestnet.s.sol` for the live testnet deployment listed below, `DeployForkSimulation.s.sol` for local fork-based rehearsal. See [docs/development.md](docs/development.md) for the complete build, test, and deploy procedure.
 
-## Docs
+## Documentation
 
-| Doc | Covers |
+| Doc | Scope |
 |---|---|
-| [docs/index.md](docs/index.md) | One-screen map of this doc set and suggested reading order by audience |
+| [docs/index.md](docs/index.md) | One-screen map of this documentation set and suggested reading order by audience |
 | [docs/architecture.md](docs/architecture.md) | System topology, module layout, message protocol, fund location model |
 | [docs/withdrawals.md](docs/withdrawals.md) | The three-path withdrawal engine, claim-time pricing, multi-leg recalls, cancellation |
-| [docs/resilience.md](docs/resilience.md) | The failure-design story, what happens when a message never arrives, arrives twice, arrives late, or lies |
+| [docs/resilience.md](docs/resilience.md) | Failure handling: message non-delivery, duplication, delayed arrival, and falsified spoke reports |
 | [docs/security.md](docs/security.md) | Trust model, roles, invariants, known limitations, audit status |
-| [docs/design-decisions.md](docs/design-decisions.md) | What was considered, rejected, and learned, a modernized version of the original design log |
+| [docs/design-decisions.md](docs/design-decisions.md) | Design rationale: alternatives considered, rejected, and superseded, reorganized from the original design log |
 | [docs/development.md](docs/development.md) | Build, test taxonomy, storage layout snapshots, module conventions for contributors |
-| [docs/operations.md](docs/operations.md) | Operational runbook items, in-transit reconciliation, confirm retries |
-| [docs/revert-audit.md](docs/revert-audit.md) | The systematic revert-path review that motivated the defensive receiver pattern |
+| [docs/operations.md](docs/operations.md) | Operational runbook: in-transit reconciliation and confirm retry procedures |
+| [docs/revert-audit.md](docs/revert-audit.md) | Systematic review of revert paths underlying the defensive receiver pattern |
 | [docs/reference/](docs/reference/) | Generated API reference (forge doc output), regenerated from NatSpec, not hand-edited |
-| [docs/docs-findings.md](docs/docs-findings.md) | Discrepancies found between code and documented behavior while writing this doc set, not fixed here, flagged for review |
+| [docs/docs-findings.md](docs/docs-findings.md) | Discrepancies identified between code and documented behavior during preparation of this documentation set, flagged for review and not remediated here |
 
 ## Testnet deployments
 
-All addresses below are the most recent deployment recorded in `broadcast/DeployTestnet.s.sol/`. Only the Aave adapter is live on any spoke today, Compound and Morpho adapters exist in source but have not been deployed to testnet. <!-- verified: broadcast/DeployTestnet.s.sol/*/run-latest.json, cross-checked against every timestamped run file per chain for the most recent CREATE per contract -->
+Addresses below reflect the most recent deployment recorded in `broadcast/DeployTestnet.s.sol/`. Only the Aave adapter is deployed on any spoke; Compound and Morpho adapters exist in source but have not been deployed to testnet. <!-- verified: broadcast/DeployTestnet.s.sol/*/run-latest.json, cross-checked against every timestamped run file per chain for the most recent CREATE per contract -->
 
 | Chain | Contract | Address |
 |---|---|---|
@@ -124,8 +124,8 @@ All addresses below are the most recent deployment recorded in `broadcast/Deploy
 | Base Sepolia | AaveAdapter | `0x458a708cb6b4bf8ea21e9089f195fad2ab61ef05` |
 | Optimism Sepolia | SpokeVault | `0x2a835c21fce662a0d88b1abe91bfbace5675a025` |
 
-These addresses come from repeated redeploys during development and may be stale by the time you read this. Treat `broadcast/DeployTestnet.s.sol/` as the source of truth, this table is a convenience snapshot of it.
+These addresses reflect repeated redeployments during development and may not represent the current state. `broadcast/DeployTestnet.s.sol/` is the source of truth; this table is a convenience snapshot.
 
 ## Disclaimer
 
-Meridian is unaudited software running on testnet only. Nothing here is financial advice, and nothing here should hold mainnet funds until an independent security review has happened. See [docs/security.md](docs/security.md) for the honest list of what's known to be unfinished.
+Meridian is unaudited software deployed on testnet only. This documentation does not constitute financial advice. The protocol should not hold mainnet funds prior to an independent security review. See [docs/security.md](docs/security.md) for a complete list of known limitations.

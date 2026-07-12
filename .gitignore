@@ -8,7 +8,7 @@ out/
 /broadcast/**/dry-run/
 
 # Docs
-docs/
+/docs/
 
 .env
 doc.md
@@ -16,3 +16,4 @@ src/tempCodeRunnerFile.js
 src/res.json
 node_modules/
 package-lock.json
+.vercel

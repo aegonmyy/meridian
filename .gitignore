@@ -11,6 +11,10 @@ out/
 /docs/
 
 .env
+
+# Generated test-wallet private keys and ephemeral run state (never commit)
+agent-testing/depositors.json
+
 doc.md
 src/tempCodeRunnerFile.js
 src/res.json

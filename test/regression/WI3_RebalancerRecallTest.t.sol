@@ -12,9 +12,10 @@ import {CCIPHelpers} from "../../src/libraries/CCIPHelpers.sol";
 import {AllocationProposal} from "../../src/interfaces/IRebalancer.sol";
 import {InsufficientUnreservedIdle} from "../../src/errors/hubErrors.sol";
 
-/// @notice WI-3 regressions — proposeAllocation sizes against totalAssets() but pays
-///         from idle (can revert deep inside CCIP token transfer), and sendToSpoke
-///         ignores reservedAssets (can ship idle a pending withdrawal depends on).
+/// @notice WI-3 regressions. proposeAllocation now sizes sends against deployable idle
+///         (idle minus reserved), not totalAssets, so a re-allocation no longer reverts when
+///         capital is already deployed. sendToSpoke still enforces reservedAssets so idle a
+///         pending withdrawal depends on cannot be shipped.
 contract WI3_RebalancerRecallTest is Test {
     CCIPLocalSimulator public ccipSimulator;
     IRouterClient public router;
@@ -99,14 +100,14 @@ contract WI3_RebalancerRecallTest is Test {
         vm.stopPrank();
     }
 
-    /// @notice Pre-fix: proposeAllocation sizes the send against totalAssets() (10_000e6)
-    /// but only unreserved idle actually backs a CCIP token transfer. With 90% already
-    /// deployed (1_000e6 idle remains), a proposal targeting the full totalAssets() tries
-    /// to ship 10_000e6 and dies deep inside the token transfer with an opaque error
-    /// instead of failing legibly. Post-fix it fails fast with a friendly error from
-    /// Rebalancer's own pre-check.
-    function test_wi3_proposeAllocation_90pctDeployed_failsLegibly() public {
-        // 90% deployed — 1_000e6 idle remains
+    /// @notice With capital already deployed, a re-allocation sizes its split against deployable
+    /// idle, not totalAssets, and succeeds. Pre-fix this reverted at the sizing gate
+    /// (InsufficientIdleForProposal(10_000e6, 1_000e6)) because a full proposal was sized at
+    /// 100% of totalAssets while only idle backs the sends. Here 90% is deployed, 1_000e6 idle
+    /// remains, and the proposal deploys exactly that 1_000e6 (both legs target the real spoke,
+    /// so the local simulator delivers them), leaving idle at zero.
+    function test_wi3_proposeAllocation_partlyDeployed_sizesAgainstIdle() public {
+        // 90% deployed, 1_000e6 idle remains
         vm.prank(address(rebalancer));
         CCIPHelpers.AdapterInstructions[]
             memory instructions = new CCIPHelpers.AdapterInstructions[](1);
@@ -117,17 +118,76 @@ contract WI3_RebalancerRecallTest is Test {
             targetAmount: 0
         });
         hub.sendToSpoke(chainSelector, instructions);
+        assertEq(hub.idleBalance(), 1_000e6, "setup: 1000e6 idle");
+
+        // valid proposal, both legs on the real spoke: AAVE 6000 + COMPOUND 2000, then AAVE 2000
+        uint256[][] memory proposed = new uint256[][](2);
+        proposed[0] = new uint256[](2);
+        proposed[0][0] = 6_000;
+        proposed[0][1] = 2_000;
+        proposed[1] = new uint256[](1);
+        proposed[1][0] = 2_000;
+
+        uint256[][] memory current = new uint256[][](2);
+        current[0] = new uint256[](2);
+        current[1] = new uint256[](1);
+
+        uint256[] memory proposedApys = new uint256[](3);
+        proposedApys[0] = 500;
+        proposedApys[1] = 400;
+        proposedApys[2] = 300;
+        uint256[] memory currentApys = new uint256[](3);
+
+        uint64[] memory selectors = new uint64[](2);
+        selectors[0] = chainSelector;
+        selectors[1] = chainSelector;
+
+        bytes32[][] memory protocolIds = new bytes32[][](2);
+        protocolIds[0] = new bytes32[](2);
+        protocolIds[0][0] = AAVE;
+        protocolIds[0][1] = COMPOUND;
+        protocolIds[1] = new bytes32[](1);
+        protocolIds[1][0] = AAVE;
+
+        AllocationProposal memory proposal = AllocationProposal({
+            proposedAllocations: proposed,
+            proposedNetApys: proposedApys,
+            currentAllocations: current,
+            currentNetApys: currentApys,
+            chainSelectors: selectors,
+            protocolIds: protocolIds
+        });
+
+        vm.prank(owner);
+        rebalancer.proposeAllocation(proposal);
+
+        // deployed exactly the 1_000e6 idle (not 10_000e6 totalAssets), so idle is now zero
+        assertEq(hub.idleBalance(), 0, "deployed the deployable idle, not totalAssets");
+    }
+
+    /// @notice A fully-deployed vault has nothing to deploy. proposeAllocation rejects the
+    /// proposal up front rather than firing CCIP sends carrying zero USDC.
+    function test_wi3_proposeAllocation_fullyDeployed_revertsNoIdle() public {
+        // deploy 100% of the vault, leaving zero idle
+        vm.prank(address(rebalancer));
+        CCIPHelpers.AdapterInstructions[]
+            memory instructions = new CCIPHelpers.AdapterInstructions[](1);
+        instructions[0] = CCIPHelpers.AdapterInstructions({
+            adapter: AAVE,
+            amount: 10_000e6,
+            targetAdapter: bytes32(0),
+            targetAmount: 0
+        });
+        hub.sendToSpoke(chainSelector, instructions);
 
         AllocationProposal memory proposal = _buildValidProposal();
 
         vm.prank(owner);
-        // must revert with the friendly pre-check error, not an opaque ERC20/CCIP failure
-        // deep inside a partially-dispatched send.
         vm.expectRevert(
             abi.encodeWithSelector(
                 Rebalancer.InsufficientIdleForProposal.selector,
-                10_000e6,
-                1_000e6
+                0,
+                0
             )
         );
         rebalancer.proposeAllocation(proposal);

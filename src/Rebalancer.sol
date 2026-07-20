@@ -258,27 +258,29 @@ contract Rebalancer {
             }
         }
 
-        uint256 totalAssets = HUB.totalAssets();
+        // Sends are sized against deployable idle (idle minus reserved), not totalAssets.
+        // Sizing against totalAssets meant a full 10000-bps proposal requested 100% of the
+        // vault while being funded only from idle, so any balance already on a spoke (down to
+        // a few wei of yield left stranded after a recall) pushed the request above idle and
+        // reverted every re-allocation. Denominating the split against deployable idle instead
+        // deploys the chosen split of whatever is available to deploy now and is unaffected by
+        // balances sitting on spokes. Per-term flooring keeps the sum at or below deployable,
+        // so the guard below only trips on a reserved-idle race, never on stranded dust.
+        uint256 idle = HUB.idleBalance();
+        uint256 reserved = HUB.reservedAssets();
+        uint256 deployable = idle > reserved ? idle - reserved : 0;
+        if (deployable == 0) revert InsufficientIdleForProposal(0, 0);
 
-        // WI-3: friendly pre-check — proposeAllocation sizes sends against totalAssets()
-        // but every send is actually paid out of unreserved idle. Without this check, a
-        // proposal valid on paper (allocations sum to 10000 bps) can die deep inside a
-        // later chain's CCIP token transfer after earlier chains' sends already landed —
-        // a partial, confusing failure. This computes the same total the dispatch loop
-        // below will request and fails atomically before any message is sent.
         uint256 totalRequested;
         for (uint256 i = 0; i < proposal.protocolIds.length; i++) {
             for (uint256 j = 0; j < proposal.protocolIds[i].length; j++) {
                 totalRequested +=
-                    (proposal.proposedAllocations[i][j] * totalAssets) /
+                    (proposal.proposedAllocations[i][j] * deployable) /
                     10_000;
             }
         }
-        uint256 idle = HUB.idleBalance();
-        uint256 reserved = HUB.reservedAssets();
-        uint256 available = idle > reserved ? idle - reserved : 0;
-        if (totalRequested > available) {
-            revert InsufficientIdleForProposal(totalRequested, available);
+        if (totalRequested > deployable) {
+            revert InsufficientIdleForProposal(totalRequested, deployable);
         }
 
         for (uint256 i = 0; i < proposal.protocolIds.length; i++) {
@@ -289,7 +291,7 @@ contract Rebalancer {
             for (uint256 j = 0; j < proposal.protocolIds[i].length; j++) {
                 _instructions[j] = CCIPHelpers.AdapterInstructions({
                     adapter: proposal.protocolIds[i][j],
-                    amount: (proposal.proposedAllocations[i][j] * totalAssets) /
+                    amount: (proposal.proposedAllocations[i][j] * deployable) /
                         10_000,
                     targetAdapter: bytes32(0),
                     targetAmount: 0

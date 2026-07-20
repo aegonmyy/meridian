@@ -1,0 +1,41 @@
+{
+  "hub": {
+    "hub": "0xC28cD8A3C35a0d6135D406B6d84d6c2188729A4b",
+    "rebalancer": "0x2f8B3CF0528d967dF7d862DfF18f10E548449a15",
+    "agentConsumer": "0x290357032F27AE35547412713bE90A57379253A8",
+    "setRebalancer": true,
+    "whitelistedChains": [
+      "3478487238524512106",
+      "10344971235874465080",
+      "5224473277236331295"
+    ],
+    "whitelistedAave": true,
+    "linkFunded": true,
+    "rebalancerPrev": "0xB2Cb676bF6bB8B4BdE3e34Bd6d840C140420107b",
+    "agentConsumerPrev": "0x230066Ad91167B107Ebe6656e21095DA93D9a2eC",
+    "rebalancerFixed": true
+  },
+  "spokes": {
+    "arbitrum-sepolia": {
+      "spoke": "0xa2368B06d205F7A98aD8b733be628Db13982E217",
+      "aaveAdapter": "0x76efe97A04a143F7a7871D5f7FEa2a2299A19A72",
+      "setAdapter": true,
+      "linkFunded": true,
+      "registered": true
+    },
+    "base-sepolia": {
+      "spoke": "0x18578f5ead00BCE64c67242D2e53c034e4653eb0",
+      "aaveAdapter": "0x3c69AE7f804BB6Cbb5252F7ce277f34bFB7D6fC4",
+      "setAdapter": true,
+      "linkFunded": true,
+      "registered": true
+    },
+    "optimism-sepolia": {
+      "spoke": "0x76efe97A04a143F7a7871D5f7FEa2a2299A19A72",
+      "aaveAdapter": "0x146BeCede39463Ba39D8c4c0182B721426f4E9f5",
+      "setAdapter": true,
+      "linkFunded": true,
+      "registered": true
+    }
+  }
+}

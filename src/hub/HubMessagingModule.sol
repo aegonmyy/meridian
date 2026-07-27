@@ -14,7 +14,7 @@ import {InvalidMessageType, NotSpoke, SpokeNotFound, InsufficientUnreservedIdle,
 ///         inbound CCIP callback handling (_ccipReceive routing + the four confirm/report
 ///         handlers), plus the single choke point (_applyReportedBalance) every balance-
 ///         carrying callback routes through.
-/// @dev R-3 of the Hub modularization. Sibling to HubAdminModule and HubWithdrawalModule — all
+/// @dev R-3 of the Hub modularization. Sibling to HubAdminModule and HubWithdrawalModule, all
 ///      three inherit HubStorage directly and none inherit each other.
 ///      Implements 3 hooks declared in HubStorage (bodiless `virtual`, `override` here):
 ///      _newMessageId (called cross-module from HubWithdrawalModule._withdraw),
@@ -33,20 +33,20 @@ abstract contract HubMessagingModule is HubStorage {
     // =========================================================================
 
     /// @notice Sends USDC and deposit instructions to a spoke via CCIP
-    /// @dev Only callable by Rebalancer. Encodes a DEPOSIT message — the only message type
+    /// @dev Only callable by Rebalancer. Encodes a DEPOSIT message. The only message type
     ///      that attaches USDC tokens to the CCIP transfer. Spoke deposits into adapters
     ///      and sends CONFIRM_RECEIPT back. inTransitAssets is incremented here and
     ///      decremented when CONFIRM_RECEIPT arrives.
     /// @param _chainSelector CCIP chain selector of the destination spoke
-    /// @param _instructions Array of adapter instructions — protocol id and USDC amount per market
+    /// @param _instructions Array of adapter instructions, protocol id and USDC amount per market
     function sendToSpoke(
         uint64 _chainSelector,
         CCIPHelpers.AdapterInstructions[] memory _instructions
     ) external onlyRebalancer {
         if (!spokes[_chainSelector].exists) revert SpokeNotFound();
-        // WI-3: authoritative solvency guard — reservedAssets is idle that a pending
-        // withdrawal already depends on. Summed across all instructions (not just the
-        // first) so a multi-instruction deposit can't undercount its own total ask.
+        // WI-3: authoritative solvency guard, reservedAssets is idle that a pending
+        // withdrawal already depends on. Summed across every instruction, rather than the
+        // first alone, so a multi-instruction deposit can't undercount its own total ask.
         uint256 totalAmount;
         for (uint256 i = 0; i < _instructions.length; i++) {
             totalAmount += _instructions[i].amount;
@@ -68,10 +68,10 @@ abstract contract HubMessagingModule is HubStorage {
 
     /// @notice Sends a recall instruction to a spoke to return funds to hub via CCIP
     /// @dev Only callable by hub itself, via this.recallFromSpoke in _withdraw's Path 3.
-    ///      Sends a WITHDRAW_AMOUNT message — instruction only, no tokens attached outbound.
+    ///      Sends a WITHDRAW_AMOUNT message: instruction only, no tokens attached outbound.
     ///      Spoke pulls proportionally from its adapters and sends tokens back via CCIP.
     ///      The messageId here matches an existing pendingWithdrawals entry so the arrival
-    ///      callback can settle it — this is what distinguishes this overload from the
+    ///      callback can settle it: this is what distinguishes this overload from the
     ///      Rebalancer-driven one below, which creates no pendingWithdrawal and therefore
     ///      must not accept a caller-supplied id (WI-1 ids are always hub-derived when there
     ///      is nothing external to match against).
@@ -96,9 +96,9 @@ abstract contract HubMessagingModule is HubStorage {
         _sendToSpoke(_chainSelector, _message);
     }
 
-    /// @notice Rebalancer-driven recall — moves capital off an overweight spoke with no
+    /// @notice Rebalancer-driven recall: moves capital off an overweight spoke with no
     ///         pendingWithdrawal attached; the arrived tokens simply become hub idle
-    /// @dev WI-3 (Issue 5, Option A). This is the missing "move weight off a chain" lever —
+    /// @dev WI-3 (Issue 5, Option A). This is the missing "move weight off a chain" lever,
     ///      without it the only way capital left a spoke was via a user-triggered Path 3
     ///      withdrawal. The hub derives its own fresh id via _newMessageId (WI-1); callers
     ///      never supply one, since there is no pendingWithdrawal to match against.
@@ -107,7 +107,7 @@ abstract contract HubMessagingModule is HubStorage {
     ///      RecallCompleted → proposeAllocation sized to the now-idle funds. The on-chain
     ///      diff engine that would automate this sequencing is explicitly out of scope (v2).
     /// @param _chainSelector CCIP chain selector of the spoke to recall from
-    /// @param _amount USDC amount to recall — must be nonzero
+    /// @param _amount USDC amount to recall: must be nonzero
     function recallFromSpoke(
         uint64 _chainSelector,
         uint256 _amount
@@ -135,7 +135,7 @@ abstract contract HubMessagingModule is HubStorage {
         _sendToSpoke(_chainSelector, _message);
     }
 
-    /// @notice Returns the USDC balance sitting idle on hub — not deployed or in transit
+    /// @notice Returns the USDC balance sitting idle on hub, not deployed or in transit
     /// @dev External view mirror of _idleBalance(), exposed so Rebalancer can pre-check
     ///      solvency before dispatching a proposal (WI-3 friendly pre-check).
     /// @return Idle USDC balance of this contract
@@ -144,11 +144,11 @@ abstract contract HubMessagingModule is HubStorage {
     }
 
     /// @notice Sends intra-spoke rebalance instructions to move capital between adapters
-    /// @dev Only callable by Rebalancer. Sends a REBALANCE message — instruction only,
+    /// @dev Only callable by Rebalancer. Sends a REBALANCE message. Instruction only,
     ///      no tokens attached. Spoke withdraws from source adapter and deposits into target
     ///      adapter on the same chain. No capital leaves the spoke chain.
     ///      Spoke responds with CONFIRM_REBALANCE carrying updated spoke balance.
-    ///      The message id is derived internally via the nonce'd _newMessageId helper —
+    ///      The message id is derived internally via the nonce'd _newMessageId helper,
     ///      callers no longer supply one (removed in WI-1 to eliminate id collisions).
     /// @param _chainSelector CCIP chain selector of the target spoke
     /// @param _instructions Array specifying source adapter, target adapter, and amount to move
@@ -200,7 +200,7 @@ abstract contract HubMessagingModule is HubStorage {
     }
 
     /// @notice Encodes and dispatches a CCIP message to a spoke vault
-    /// @dev Handles all outbound message types. Only DEPOSIT messages attach USDC tokens —
+    /// @dev Handles all outbound message types. Only DEPOSIT messages attach USDC tokens,
     ///      all other types (WITHDRAW_AMOUNT, REBALANCE, REPORT_BALANCE) carry instructions only.
     ///      REBALANCE messages use a higher gasLimit (1_000_000) to accommodate multiple
     ///      adapter operations in a single message. All others use 500_000.
@@ -236,19 +236,19 @@ abstract contract HubMessagingModule is HubStorage {
             data: CCIPHelpers.encode(_message),
             tokenAmounts: tokenAmount,
             feeToken: address(LINK),
-            // WI-0/WI-6: left false (ordered) — verified against the pinned OffRamp
+            // WI-0/WI-6: left false (ordered), verified against the pinned OffRamp
             // (offRamp/OffRamp.sol, NonceManager.sol) that the premise for flipping this
             // ("a failed/reverting message blocks subsequent same-sender messages on the
             // lane") does not hold. The inbound nonce is incremented in incrementInboundNonce
-            // BEFORE trial execution runs, for every UNTOUCHED->{SUCCESS,FAILURE} transition
-            // — i.e. the nonce advances on the FIRST EXECUTION ATTEMPT regardless of its
+            // before trial execution runs, for every UNTOUCHED->{SUCCESS,FAILURE} transition,
+            // so the nonce advances on the first execution attempt regardless of its
             // outcome, so a message that reverts still unblocks the next one once attempted
             // (which happens automatically/promptly under normal DON operation). The one
-            // scenario ordered execution genuinely blocks on is a message that is never
-            // attempted at all (stuck UNTOUCHED — a DON/relayer liveness issue, not a
+            // scenario ordered execution does block on is a message that is never
+            // attempted at all (stuck UNTOUCHED: a DON or relayer liveness issue, not a
             // contract-level revert); that is an infra concern out-of-order execution would
             // not fully insulate against either for messages still ahead of the stuck one.
-            // See docs/operations.md and the executor's final report for the full finding.
+            // See docs/operations.md for the full finding.
             extraArgs: Client._argsToBytes(
                 Client.EVMExtraArgsV2({
                     gasLimit: outboundGasLimit,
@@ -275,7 +275,7 @@ abstract contract HubMessagingModule is HubStorage {
     }
 
     /// @notice Derives a collision-free internal message id from a monotonic nonce
-    /// @dev Every id is unique across the hub's lifetime — the incrementing nonce
+    /// @dev Every id is unique across the hub's lifetime. The incrementing nonce
     ///      guarantees no two operations (deposits, withdrawals, rebalances, recalls)
     ///      ever share an id, even within a single block. The additional context,
     ///      chainid, and address inputs harden the id against cross-contract reuse.
@@ -331,16 +331,16 @@ abstract contract HubMessagingModule is HubStorage {
         }
     }
 
-    /// @notice Applies (or quarantines) a spoke's self-reported balance — the single choke
+    /// @notice Applies (or quarantines) a spoke's self-reported balance. The single choke
     ///         point every balance-carrying callback routes through
     /// @dev WI-7 (Issue 7b, Option A). Upside-only sanity band: accept if
     ///      `reported <= netSentToSpoke[selector] * (10000 + MAX_YIELD_BPS) / 10000 + REPORT_DUST`.
-    ///      Under-reporting always passes — it deflates share price, the safe direction —
+    ///      Under-reporting always passes: it deflates share price, the safe direction,
     ///      but a drop exceeding LOSS_ALERT_BPS since the last report emits an informational
-    ///      event. On breach: NEVER clamp (clamping corrupts pricing the other direction) —
+    ///      event. On breach, never clamp (clamping corrupts pricing the other direction);
     ///      quarantine instead. spokeBalances is left untouched, the report is stored in
     ///      quarantinedReports, SuspiciousSpokeReport fires, and deposits/withdrawals pause.
-    ///      This function itself never reverts — callers include token-carrying CCIP arrival
+    ///      This function itself never reverts, callers include token-carrying CCIP arrival
     ///      paths (CONFIRM_WITHDRAWAL) that must still deliver their tokens and settle
     ///      regardless of whether the reported BALANCE passes the band.
     /// @param _chainSelector The reporting spoke's chain selector
@@ -376,8 +376,8 @@ abstract contract HubMessagingModule is HubStorage {
     // CCIP Callback Handlers
     // =========================================================================
 
-    /// @notice Handles CONFIRM_REBALANCE from spoke — updates balance after intra-spoke rebalance
-    /// @dev No pending withdrawal involved — just updates accounting.
+    /// @notice Handles CONFIRM_REBALANCE from spoke, updates balance after intra-spoke rebalance
+    /// @dev No pending withdrawal involved, just updates accounting.
     ///      Spoke sends this after successfully moving capital between adapters.
     /// @param _message Decoded CCIP message carrying updated spokeBalance and reportTimestamp
     /// @param _chainSelector Source chain selector identifying which spoke sent the message
@@ -389,7 +389,7 @@ abstract contract HubMessagingModule is HubStorage {
         _applyReportedBalance(_chainSelector, _message.spokeBalance);
     }
 
-    /// @notice Handles CONFIRM_RECEIPT from spoke — confirms deposit and clears inTransit
+    /// @notice Handles CONFIRM_RECEIPT from spoke, confirms deposit and clears inTransit
     /// @dev Spoke sends this after depositing received USDC into adapters.
     ///      Decrements inTransitAssets by the tracked amount for this messageId.
     /// @param _message Decoded CCIP message carrying updated spokeBalance and reportTimestamp
@@ -408,11 +408,11 @@ abstract contract HubMessagingModule is HubStorage {
         _applyReportedBalance(_chainSelector, _message.spokeBalance);
     }
 
-    /// @notice Handles REPORT_BALANCE from spoke — updates balance and attempts to settle a
+    /// @notice Handles REPORT_BALANCE from spoke, updates balance and attempts to settle a
     ///         pending Path 2 withdrawal once ALL active spokes are fresh
     /// @dev Spoke sends this in response to a REPORT_BALANCE request from hub. WI-4 fix:
     ///      previously settled on the FIRST spoke's report even with other spokes still
-    ///      stale — now gated on _allSpokesFresh() so settlement uses a fully-refreshed
+    ///      stale, now gated on _allSpokesFresh() so settlement uses a fully-refreshed
     ///      balance picture. Settlement itself is via attemptSettlement (claim-time pricing,
     ///      non-reverting), wrapped in try/catch so an external-call failure inside
     ///      settlement (e.g. safeTransfer to an incompatible receiver) can never revert this
@@ -431,21 +431,21 @@ abstract contract HubMessagingModule is HubStorage {
         }
     }
 
-    /// @notice Handles CONFIRM_WITHDRAWAL from spoke — funds arrived. Three cases:
-    ///         (1) a live Path 3 recall leg — credit the arrival and attempt settlement;
-    ///         (2) an orphaned leg (withdrawal was cancelled, or its entry is otherwise gone)
-    ///             — funds become ordinary idle, informational event only;
-    ///         (3) never a leg at all — a WI-3 Rebalancer-driven recall, funds become idle
+    /// @notice Handles CONFIRM_WITHDRAWAL from spoke, funds arrived. Three cases:
+    ///         (1) a live Path 3 recall leg: credit the arrival and attempt settlement;
+    ///         (2) an orphaned leg (withdrawal was cancelled, or its entry is otherwise
+    ///             gone), where funds become ordinary idle and only an event is emitted;
+    ///         (3) never a leg at all: a WI-3 Rebalancer-driven recall, funds become idle
     /// @dev Spoke sends this after pulling funds from adapters and transferring USDC back to
-    ///      hub. actualAmount is read from destTokenAmounts (the CCIP token envelope) — the
-    ///      ground truth of what arrived — never from the payload, which carries no amount
+    ///      hub. actualAmount is read from destTokenAmounts (the CCIP token envelope), which
+    ///      is the ground truth of what arrived. Never from the payload, which carries no amount
     ///      for confirm messages post-WI-2 (see docs/revert-audit.md). legToWithdrawal
     ///      disambiguates case (2) from (3): a leg id is always registered at dispatch time,
     ///      so `legToWithdrawal[id] != 0` proves this WAS a leg (case 1/2); a fresh WI-3 id
     ///      was never registered as a leg (case 3).
     /// @param _message Decoded CCIP message carrying updated spokeBalance and reportTimestamp
     /// @param _chainSelector Source chain selector identifying which spoke sent the message
-    /// @param destTokenAmounts Token envelope delivered alongside this message — ground truth
+    /// @param destTokenAmounts Token envelope delivered alongside this message, ground truth
     function _handleWithdrawalCallback(
         CCIPHelpers.CcipMessage memory _message,
         uint64 _chainSelector,
@@ -456,7 +456,7 @@ abstract contract HubMessagingModule is HubStorage {
             ? destTokenAmounts[0].amount
             : 0;
         lastReportTimestamp[_chainSelector] = _message.reportTimestamp;
-        // WI-7: net down by the actual arrival, clamped at 0 — a spoke recalling more than
+        // WI-7: net down by the actual arrival, clamped at 0. A spoke recalling more than
         // the hub ever sent it is either yield (policed by the band below, not here) or a
         // reporting inconsistency, neither of which should underflow this counter.
         netSentToSpoke[_chainSelector] -= actualAmount > netSentToSpoke[_chainSelector]
@@ -476,7 +476,7 @@ abstract contract HubMessagingModule is HubStorage {
                 emit OrphanedRecallArrival(_chainSelector, actualAmount);
             }
         } else {
-            // never a leg — WI-3 Rebalancer-driven recall, funds become ordinary idle
+            // never a leg, WI-3 Rebalancer-driven recall, funds become ordinary idle
             emit RecallCompleted(_chainSelector, actualAmount);
         }
     }

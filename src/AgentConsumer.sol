@@ -9,7 +9,7 @@ import {AllocationProposal, IRebalancer} from "./interfaces/IRebalancer.sol";
 /// @dev The off-chain agent is a cron job wallet that periodically fetches APYs from Aave,
 ///      Compound, and Morpho, computes the optimal allocation, and calls proposeAllocation.
 ///      This contract enforces access control before forwarding to the Rebalancer.
-///      No Chainlink Functions dependency — simpler, cheaper, and operator controlled.
+///      No Chainlink Functions dependency, simpler, cheaper, and operator controlled.
 ///      Architecture: off-chain script → AgentConsumer → Rebalancer → HubVault → SpokeVaults
 contract AgentConsumer is Ownable {
     // =========================================================================
@@ -17,11 +17,11 @@ contract AgentConsumer is Ownable {
     // =========================================================================
 
     /// @notice Address of the Rebalancer contract that validates and executes proposals
-    /// @dev Immutable — set once at deployment. AgentConsumer forwards all proposals here.
+    /// @dev Immutable: set once at deployment. AgentConsumer forwards all proposals here.
     address public immutable REBALANCER;
 
     /// @notice Address of the off-chain agent wallet (cron job EOA)
-    /// @dev Immutable — the EOA that signs and submits allocation proposals on a schedule.
+    /// @dev Immutable: the EOA that signs and submits allocation proposals on a schedule.
     ///      Authorized alongside owner to call proposeAllocation.
     address public immutable AGENT;
 
@@ -42,9 +42,9 @@ contract AgentConsumer is Ownable {
     // =========================================================================
 
     /// @notice Emitted when a proposal is successfully forwarded to the Rebalancer
-    /// @dev Does not indicate the proposal was accepted — Rebalancer may still revert
+    /// @dev Does not indicate the proposal was accepted. Rebalancer may still revert
     ///      if guards fail. Emitted after the Rebalancer call succeeds.
-    /// @param caller Address that submitted the proposal — either AGENT or owner
+    /// @param caller Address that submitted the proposal, either AGENT or owner
     /// @param timestamp Block timestamp when the proposal was submitted
     event AllocationProposed(address indexed caller, uint256 timestamp);
 
@@ -63,12 +63,12 @@ contract AgentConsumer is Ownable {
     // =========================================================================
 
     /// @notice Deploys AgentConsumer with immutable Rebalancer and agent references
-    /// @dev Ownable(_owner) runs before the body — zero _owner reverts with
+    /// @dev Ownable(_owner) runs before the body: zero _owner reverts with
     ///      OwnableInvalidOwner before InvalidConstructorArguments is checked.
     ///      Zero _rebalancer or _agent reverts with InvalidConstructorArguments.
     /// @param _rebalancer Address of the Rebalancer contract
     /// @param _agent Address of the off-chain agent EOA (cron job wallet)
-    /// @param _owner Address of the contract owner — should be a multisig before mainnet
+    /// @param _owner Address of the contract owner: should be a multisig before mainnet
     constructor(
         address _rebalancer,
         address _agent,
@@ -88,7 +88,7 @@ contract AgentConsumer is Ownable {
     // =========================================================================
 
     /// @notice Forwards an allocation proposal from the off-chain agent to the Rebalancer
-    /// @dev Only callable by AGENT or owner. All proposal validation occurs in the Rebalancer —
+    /// @dev Only callable by AGENT or owner. All proposal validation occurs in the Rebalancer,
     ///      this contract is a pure access control wrapper. If Rebalancer reverts (cooldown,
     ///      invalid allocation, below threshold etc) this call reverts too.
     ///      Emits AllocationProposed only on success.

@@ -7,7 +7,7 @@ import {HubStorage} from "../../src/hub/HubStorage.sol";
 import {NoPendingWithdrawal, NotWithdrawalOwner, WithdrawalNotYetCancellable} from "../../src/errors/hubErrors.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-/// @notice WI-4 regressions — withdrawal engine v2: multi-spoke recall, claim-time pricing,
+/// @notice WI-4 regressions, withdrawal engine v2: multi-spoke recall, claim-time pricing,
 ///         cancel. Companion to WithdrawPath1Test's InsufficientRecallLiquidity tests (Path 3
 ///         fail-closed) which live alongside the ordering tests they depend on.
 contract WI4_WithdrawalEngineV2Test is BaseHubTest {
@@ -16,7 +16,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
 
     /// @notice Old bug: Path 2 settled on the FIRST spoke's report even with other spokes
     /// still stale. Fixed: settlement only attempted once _allSpokesFresh() is true.
-    /// Demonstrated here with a second, non-responding (mock) spoke that never reports —
+    /// Demonstrated here with a second, non-responding (mock) spoke that never reports,
     /// the withdrawal must stay pending forever rather than settling off the one real
     /// spoke's report.
     function test_wi4_pathTwo_doesNotSettleUntilAllSpokesFresh() public {
@@ -44,7 +44,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
     }
 
     /// @notice Old bug: Path 2 payout used the quote taken at request time, ignoring any
-    /// loss reported during the refresh. Fixed: claim-time pricing — previewRedeem is
+    /// loss reported during the refresh. Fixed: claim-time pricing. previewRedeem is
     /// recomputed at settlement, so a loss discovered during the REPORT_BALANCE refresh
     /// reduces the actual payout below the original quote.
     function test_wi4_claimTimePricing_lossReducesPayout() public {
@@ -55,7 +55,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
 
         uint256 quotedAssets = 7_000e6; // idle (8_000e6) covers this -> Path 2, not Path 3
 
-        // simulate a loss discovered on the adapter — real balance is now lower than the
+        // simulate a loss discovered on the adapter: real balance is now lower than the
         // hub's cached spokeBalances (2_000e6). The request-time quote is computed off the
         // still-stale cached value; the loss is only revealed once the REPORT_BALANCE
         // refresh (triggered by this very Path 2 request) reads the adapter live.
@@ -68,7 +68,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
 
         // claim-time pricing: alice receives less than her quote because the loss is now
         // reflected in totalAssets by the time settlement runs (same synchronous call, but
-        // AFTER the refreshed report — the ordering that matters for the fix).
+        // AFTER the refreshed report: the ordering that matters for the fix).
         uint256 received = usdc.balanceOf(alice) - aliceBalanceBefore;
         assertLt(received, quotedAssets, "loss must reduce actual payout below quote");
         // shares burned = 7_000e6 (1:1 price pre-loss); post-loss totalAssets = 9_000e6
@@ -77,7 +77,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
     }
 
     /// @notice cancelWithdrawal reverts before WITHDRAWAL_TIMEOUT, reverts for non-owners,
-    /// and succeeds after timeout — returning shares and releasing the reservation.
+    /// and succeeds after timeout, returning shares and releasing the reservation.
     function test_wi4_cancelWithdrawal_returnsSharesAfterTimeout() public {
         uint64 selector2 = 9999;
         address mockSpoke2 = makeAddr("nonRespondingSpoke2");
@@ -118,16 +118,16 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
             "reservation released"
         );
 
-        // cancelling again reverts — entry is gone
+        // cancelling again reverts: entry is gone
         vm.prank(alice);
         vm.expectRevert(NoPendingWithdrawal.selector);
         hub.cancelWithdrawal(id);
     }
 
     /// @notice A settlement attempt that finds insufficient claimable idle right now defers
-    /// rather than reverting — the entry stays pending and can be retried later.
+    /// rather than reverting: the entry stays pending and can be retried later.
     function test_wi4_settlementDeferred_whenInsolventRightNow() public {
-        // no spokes registered on a fresh hub — every withdrawal is Path 2 and permanently
+        // no spokes registered on a fresh hub: every withdrawal is Path 2 and permanently
         // pending (nothing ever reports back to trigger _allSpokesFresh()==true)
         vm.prank(owner);
         HUB freshHub = new HUB(
@@ -153,7 +153,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
         freshHub.deposit(8_000e6, bob);
         vm.stopPrank();
 
-        // both request 7_000e6 — reservedAssets sums to 14_000e6, well within the current
+        // both request 7_000e6, reservedAssets sums to 14_000e6, well within the current
         // 16_000e6 idle, so both are accepted at request time
         vm.recordLogs();
         vm.prank(alice);
@@ -165,7 +165,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
         bytes32 bobId = _lastWithdrawalIdFor(freshHub);
 
         // simulate idle dropping well below what's reserved (e.g. an unrelated adapter
-        // loss elsewhere is not possible here with no spokes — this directly forces the
+        // loss elsewhere is not possible here with no spokes. This directly forces the
         // "insufficient claimable idle right now" condition the deferred path guards)
         deal(address(usdc), address(freshHub), 10_000e6);
 
@@ -173,7 +173,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
         emit HubStorage.SettlementDeferred(aliceId, 0, 0);
         freshHub.attemptSettlement(aliceId);
 
-        // entry must still be pending — non-reverting, no funds moved
+        // entry must still be pending, non-reverting, no funds moved
         assertEq(freshHub.balanceOf(address(freshHub)) > 0, true);
         assertGt(freshHub.reservedAssets(), 0, "reservation must remain");
         assertEq(usdc.balanceOf(alice), 0, "alice not paid while deferred");
@@ -185,7 +185,7 @@ contract WI4_WithdrawalEngineV2Test is BaseHubTest {
         return _lastWithdrawalIdFor(hub);
     }
 
-    /// @dev WithdrawalQueued's second indexed topic is the withdrawal id — the only
+    /// @dev WithdrawalQueued's second indexed topic is the withdrawal id. The only
     /// off-chain source of it (the hub exposes no enumeration of pending withdrawals).
     function _lastWithdrawalIdFor(HUB _hub) internal returns (bytes32) {
         bytes32 sig = keccak256(

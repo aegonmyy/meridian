@@ -16,7 +16,7 @@ The following terms are used consistently throughout this documentation set.
 
 ## Hub and spoke topology
 
-An alternative design would deploy one contract per chain, each independently tracking its own share price, with users selecting a deposit chain. Meridian does not use this design. The protocol maintains exactly one accounting authority, the hub on Ethereum; every other chain functions as an execution arm with no user-facing accounting of its own.
+An alternative design would deploy one contract per chain, each independently tracking its own share price, with users selecting a deposit chain. Meridian does not use this design. The protocol maintains exactly one accounting authority, the hub on Ethereum; every other chain is an execution arm with no user-facing accounting of its own.
 
 Yield opportunities across chains change over time: a given market's rate on one L2 varies month to month, and the highest available rate in the system may shift to a different chain. Under a per-chain share price, capturing a shift would require a user to withdraw from one chain's vault and deposit into another's, incurring gas, slippage, and CCIP latency on each rebalance, with the decision left to the user. Centralized accounting on the hub allows capital to move between chains and markets without user-facing action, equivalent from the user's perspective to a single-chain vault reallocating between two lending markets. A spoke receives instructions and holds capital; it does not make allocation decisions.
 
@@ -64,7 +64,7 @@ All hub-spoke communication uses a single struct, `CCIPHelpers.CcipMessage`, ABI
 | Spoke to hub | `CONFIRM_WITHDRAWAL` | Yes, if any pulled | after `_handleWithdrawalWithAmount` finishes | `_handleWithdrawalCallback` |
 <!-- verified: HubMessagingModule.sol:sendToSpoke, HubMessagingModule.sol:rebalance, HubMessagingModule.sol:_requestAllBalanceReports, HubMessagingModule.sol:recallFromSpoke, SpokeHandlersModule.sol:_handleDeposit, SpokeHandlersModule.sol:_handleRebalance, SpokeHandlersModule.sol:_reportBalance, SpokeHandlersModule.sol:_handleWithdrawalWithAmount, HubMessagingModule.sol:_handleDepositCallback, HubMessagingModule.sol:_handleRebalanceCallback, HubMessagingModule.sol:_handleReportBalanceCallback, HubMessagingModule.sol:_handleWithdrawalCallback -->
 
-`REPORT_BALANCE` is a single enum value used in both directions; a request from the hub and a response from a spoke share the same message type and are distinguished only by direction. Every spoke-to-hub message carries `spokeBalance` and `reportTimestamp`, so any interaction with a spoke, not only an explicit balance request, refreshes the hub's view of that spoke.
+`REPORT_BALANCE` is a single enum value used in both directions; a request from the hub and a response from a spoke share the same message type and are distinguished only by direction. Every spoke-to-hub message carries `spokeBalance` and `reportTimestamp`, so any interaction with a spoke refreshes the hub's view of that spoke, whether or not it was prompted by an explicit balance request.
 
 ### Token delivery ordering
 
@@ -103,7 +103,7 @@ The hub is a standard OpenZeppelin ERC4626 vault. `totalAssets()` returns the su
 
 ### Worked example: a first deposit
 
-Example. A freshly deployed hub has no depositors and no registered spokes. Alice deposits 1,000 USDC.
+A freshly deployed hub has no depositors and no registered spokes. Alice deposits 1,000 USDC.
 
 - Before: `totalSupply() == 0`, `totalAssets() == 0`.
 - Alice calls `deposit(1000e6, alice)`. `previewDeposit` computes shares as `assets * (totalSupply() + 1) / (totalAssets() + 1)` (the vault applies no decimals offset); for an empty vault this yields `1000e6 * 1 / 1 = 1000e6` shares. <!-- verified: lib/openzeppelin-contracts/contracts/token/ERC20/extensions/ERC4626.sol:_convertToShares, no _decimalsOffset override in HubStorage.sol -->

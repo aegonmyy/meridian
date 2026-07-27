@@ -136,7 +136,7 @@ Same verdict as the entry above it. The three-way shape survived, the settlement
 `_idleBalance()` still reads raw `balanceOf(address(this))`, no filtering of unsolicited transfers. (`HubWithdrawalModule.sol:_idleBalance`)
 
 **`totalManagedAssets` formula, three mutually exclusive buckets**: CURRENT
-Still idle plus spoke balances plus in-transit, no overlap. `totalPrincipal` is no longer part of the sum because it no longer exists at all (see above), not merely excluded. (`HubWithdrawalModule.sol:totalManagedAssets`)
+Still idle plus spoke balances plus in-transit, no overlap. `totalPrincipal` is no longer part of the sum because it no longer exists at all (see above), rather than being excluded from a sum it could still contribute to. (`HubWithdrawalModule.sol:totalManagedAssets`)
 
 **Critical: concurrent withdrawal race, `reservedAssets`**: CURRENT
 The exact pattern quoted in state.md (`reservedAssets += assets` on queue, `reservedAssets -= assets` on release) is still literally present in the withdrawal path, now spread across the three-path engine with per-entry `reservedIdle` tracking rather than one flat variable touched inline everywhere. (`HubWithdrawalModule.sol:_withdraw`, `HubWithdrawalModule.sol:_attemptSettleWithdrawal`)
@@ -181,7 +181,7 @@ The overall shape shipped. An LLM proposes an allocation from live APY data plus
 
 The documentation plan flags `proposeAllocation` bps sizing (of `totalAssets` vs of idle) as an open decision to verify at time of writing, not to assume. It has landed. `Rebalancer.proposeAllocation` sizes every allocation as bps of `HUB.totalAssets()`, then runs a separate WI-3 pre-check comparing the resulting total request against currently unreserved idle (`idle - reserved`), failing the whole proposal atomically with `InsufficientIdleForProposal` if it doesn't fit, before any CCIP message is sent. So the semantics are bps-of-totalAssets with an idle-sufficiency guard layered on top, not bps-of-idle directly. This should be written up as settled, not as an open question, in `docs/security.md` and `docs/architecture.md`. (`Rebalancer.sol:proposeAllocation`)
 
-The second open item, owner-initiated manual pause with a separate pause reason (deferred to v1.1 per state.md), is still genuinely open. No manual pause entry point exists anywhere in the Hub modules. `_pause()`/`_unpause()` are only ever called automatically from inside `_applyReportedBalance`'s quarantine logic. (`HubMessagingModule.sol:_applyReportedBalance`, only caller of `_pause()`/`_unpause()`)
+The second open item, owner-initiated manual pause with a separate pause reason (deferred to v1.1 per state.md), is still open. No manual pause entry point exists anywhere in the Hub modules. `_pause()`/`_unpause()` are only ever called automatically from inside `_applyReportedBalance`'s quarantine logic. (`HubMessagingModule.sol:_applyReportedBalance`, only caller of `_pause()`/`_unpause()`)
 
 ---
 

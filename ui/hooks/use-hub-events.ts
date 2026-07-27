@@ -49,7 +49,7 @@ export function useWatchWithdrawalQueued(
 }
 
 // ── WithdrawalProcessed ───────────────────────────────────────────────────
-// Triggered: _processWithdrawal() — Path 1 (sync) or CCIP callbacks (Path 2/3)
+// Triggered: _processWithdrawal(). Path 1 (sync) or CCIP callbacks (Path 2/3)
 // Indexed: owner, receiver
 export function useWatchWithdrawalProcessed(
   onProcessed: (owner: `0x${string}`, receiver: `0x${string}`, assets: bigint, messageId: `0x${string}`) => void
@@ -156,7 +156,7 @@ export function useDepositPageEvents(connectedAddress?: `0x${string}`) {
       title: "Withdrawal queued",
       body: isPath3
         ? `${formatUSD(assets)} will arrive after CCIP recall from spoke (~5 min).`
-        : `${formatUSD(assets)} queued — awaiting fresh spoke balance report.`,
+        : `${formatUSD(assets)} queued, awaiting a fresh spoke balance report.`,
     });
   });
 

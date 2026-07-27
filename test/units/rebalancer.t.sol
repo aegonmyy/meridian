@@ -48,7 +48,7 @@ contract RebalancerTest is Test {
 
         usdc = new Asset();
 
-        // deploy rebalancer first — hub needs its address
+        // deploy rebalancer first: hub needs its address
 
         vm.prank(owner);
         hub = new HUB(
@@ -76,7 +76,7 @@ contract RebalancerTest is Test {
         vm.prank(owner);
         hub.setRebalancer(address(rebalancer));
 
-        // update hub rebalancer — need to redeploy hub with correct rebalancer
+        // update hub rebalancer: need to redeploy hub with correct rebalancer
         // simplest: redeploy hub with correct rebalancer address
 
         vm.prank(owner);
@@ -213,7 +213,7 @@ contract RebalancerTest is Test {
     }
 
     // =========================================================================
-    // rebalance — happy path
+    // rebalance, happy path
     // =========================================================================
 
     function test_rebalance_happyPath_sourceDecreases() public {
@@ -246,7 +246,7 @@ contract RebalancerTest is Test {
     }
 
     // =========================================================================
-    // rebalance — revert paths
+    // rebalance: revert paths
     // =========================================================================
 
     function test_rebalance_revert_notAuthorized() public {

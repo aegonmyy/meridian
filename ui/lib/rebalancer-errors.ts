@@ -13,7 +13,7 @@ export const REBALANCER_ERROR_MAP: Record<string, HubErrorInfo> = {
   },
   SourceEqualsTarget: {
     title: "Source equals target",
-    cause: "The source and target protocol IDs are identical — moving capital from a protocol to itself is a no-op.",
+    cause: "The source and target protocol IDs are identical, so moving capital from a protocol to itself is a no-op.",
     fix: "Select two different protocols for the rebalance.",
   },
   ZeroAmount: {
@@ -49,7 +49,7 @@ export const REBALANCER_ERROR_MAP: Record<string, HubErrorInfo> = {
   InvalidConstructorArguments: {
     title: "Invalid deployment arguments",
     cause: "A constructor argument was the zero address.",
-    fix: "Deployment error — re-deploy with valid hub, agentConsumer, and owner addresses.",
+    fix: "Deployment error. Re-deploy with valid hub, agentConsumer, and owner addresses.",
   },
 };
 

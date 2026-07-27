@@ -26,9 +26,9 @@ const USDC_DECIMALS = 6;
 
 // ── Path labels so the user understands async withdrawals ─────────────────
 const WITHDRAWAL_PATH_HELP = {
-  path1: "Immediate — idle USDC covers your amount and all spoke reports are fresh.",
-  path2: "Queued — idle covers your amount but spoke reports are stale. Hub is refreshing balances via CCIP (~1 min).",
-  path3: "Queued — not enough idle USDC. Hub is recalling funds from the best spoke via CCIP (~5 min).",
+  path1: "Immediate. Idle USDC covers your amount and all spoke reports are fresh.",
+  path2: "Queued. Idle covers your amount but spoke reports are stale. Hub is refreshing balances via CCIP (~1 min).",
+  path3: "Queued. There is not enough idle USDC. Hub is recalling funds from the best spoke via CCIP (~5 min).",
 };
 
 function DepositContent() {
@@ -93,7 +93,7 @@ function DepositContent() {
     query: { enabled: !!address },
   });
 
-  // Hub idle vs reserved — indicates which withdrawal path will trigger
+  // Hub idle vs reserved: indicates which withdrawal path will trigger
   const { data: reservedAssets } = useReadContract({
     address: CONTRACTS.hub.address,
     abi: HUB_ABI,
@@ -120,7 +120,7 @@ function DepositContent() {
     useWriteContract();
   const { writeContract: depositFn, data: depositTxHash, isPending: isDepositing } =
     useWriteContract();
-  // withdraw() takes USDC amount — cleaner UX than redeem() which takes shares
+  // withdraw() takes USDC amount, cleaner UX than redeem() which takes shares
   const { writeContract: withdrawFn, data: withdrawTxHash, isPending: isWithdrawing } =
     useWriteContract();
 
@@ -162,7 +162,7 @@ function DepositContent() {
         address: CONTRACTS.hub.address,
         abi: HUB_ABI,
         functionName: "deposit",
-        // deposit(assets, receiver) — ERC4626
+        // deposit(assets, receiver), ERC4626
         args: [parsedAssets, address],
         chainId: sepolia.id,
       },
@@ -179,7 +179,7 @@ function DepositContent() {
       {
         address: CONTRACTS.hub.address,
         abi: HUB_ABI,
-        // withdraw(assets, receiver, owner) — triggers _withdraw internally
+        // withdraw(assets, receiver, owner), triggers _withdraw internally
         // Hub decides Path 1/2/3 based on idle balance and spoke freshness
         functionName: "withdraw",
         args: [parsedAssets, address, address],
@@ -206,7 +206,7 @@ function DepositContent() {
     // Simplified: if parsedAssets > totalAssets - reservedAssets, it's path3
     const idle = totalAssets - reservedAssets;
     if (parsedAssets > idle) return "path3";
-    return "path2"; // conservative — assume stale spokes (path2), may upgrade to path1 on-chain
+    return "path2"; // conservative, assume stale spokes (path2), may upgrade to path1 on-chain
   }
 
   const path = tab === "withdraw" ? predictedPath() : null;
@@ -334,7 +334,7 @@ function DepositContent() {
                           color: path === "path3" ? "#92400e" : path === "path2" ? "#4c1d95" : "#065f46",
                         }}
                       >
-                        {path === "path1" ? "Path 1 — Instant" : path === "path2" ? "Path 2 — ~1 min" : "Path 3 — ~5 min"}
+                        {path === "path1" ? "Path 1: instant" : path === "path2" ? "Path 2: ~1 min" : "Path 3: ~5 min"}
                       </p>
                       <p
                         className="text-xs"
@@ -408,10 +408,10 @@ function DepositContent() {
         </div>
       </main>
 
-      {/* Error modal — shown when any Hub custom error is thrown */}
+      {/* Error modal, shown when any Hub custom error is thrown */}
       <ErrorModal error={hubError} onClose={() => setHubError(null)} />
 
-      {/* Event toasts — WithdrawalQueued and WithdrawalProcessed */}
+      {/* Event toasts: WithdrawalQueued and WithdrawalProcessed */}
       <EventToast toasts={toasts} onDismiss={dismiss} />
     </div>
   );

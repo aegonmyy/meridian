@@ -33,17 +33,17 @@ export const HUB_ERROR_MAP: Record<string, HubErrorInfo> = {
   NotSpoke: {
     title: "Unknown spoke",
     cause: "A CCIP message arrived from an unregistered address.",
-    fix: "Internal error — contact the protocol team.",
+    fix: "Internal error. Contact the protocol team.",
   },
   InvalidMessageType: {
     title: "Invalid CCIP message",
     cause: "An unrecognised message type was received over CCIP.",
-    fix: "Internal error — contact the protocol team.",
+    fix: "Internal error. Contact the protocol team.",
   },
   InvalidConstructorArguments: {
     title: "Invalid deployment arguments",
     cause: "A constructor argument was the zero address.",
-    fix: "Deployment error — re-deploy with valid addresses.",
+    fix: "Deployment error. Re-deploy with valid addresses.",
   },
 };
 

@@ -4,10 +4,10 @@ pragma solidity 0.8.33;
 import {BaseHubTest} from "./BaseHubTest.t.sol";
 import {ZeroWithdrawal} from "../../../src/errors/hubErrors.sol";
 
-/// @notice Tests for _withdraw Path 2 — idle covers + spokes stale → queue + report balance
+/// @notice Tests for _withdraw Path 2: idle covers + spokes stale → queue + report balance
 /// Condition: idle >= assets AND _allSpokesFresh() == false
 /// Setup: vm.warp to safe timestamp, set stale lastReportTimestamp via vm.store
-/// CCIP synchronous — report arrives and withdrawal settles in same transaction
+/// CCIP synchronous, report arrives and withdrawal settles in same transaction
 contract WithdrawPath2Test is BaseHubTest {
 
     function test_withdrawPath2_aliceReceivesCorrectUSDC() public {

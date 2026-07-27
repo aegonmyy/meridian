@@ -20,7 +20,7 @@ contract SpokeVaultHandler is Test {
     mapping(bytes32 => bool) public isRegistered;
     mapping(bytes32 => bool) public ghostEverRegistered;
 
-    // ghost variables — track expected state independently
+    // ghost variables: track expected state independently
     uint256 public ghostActiveAdaptersLength;
 
     constructor(SpokeVault _spoke, address _owner) {
@@ -49,7 +49,7 @@ contract SpokeVaultHandler is Test {
         if (!exists) return;
         vm.prank(owner);
         spoke.removeAdapter(id);
-        // NOTE: ghost_activeAdaptersLength stays same — array never shrinks
+        // ghost_activeAdaptersLength stays the same, since the array never shrinks
     }
 
     function registeredIdsLength() external view returns (uint256) {

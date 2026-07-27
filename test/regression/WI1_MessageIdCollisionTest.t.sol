@@ -4,11 +4,11 @@ pragma solidity 0.8.33;
 import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-/// @notice WI-1 regression — content-derived message ids collide.
+/// @notice WI-1 regression, content-derived message ids collide.
 /// @dev The CCIPLocalSimulator routes messages synchronously (nested), so the
 ///      async fund-stranding manifestation (two same-id messages in flight,
 ///      corrupting inTransitAmount / overwriting a pending withdrawal) cannot be
-///      reproduced end-to-end in this harness — each round trip fully settles
+///      reproduced end-to-end in this harness, each round trip fully settles
 ///      before the next call. We therefore assert the ROOT CAUSE directly: two
 ///      logically distinct operations in the same block must produce distinct
 ///      internal message ids. Pre-fix these ids are equal (keccak of

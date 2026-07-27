@@ -12,7 +12,7 @@ import {CCIPHelpers} from "../../../src/libraries/CCIPHelpers.sol";
 import {NotRebalancer, SpokeNotFound, ZeroWithdrawal} from "../../../src/errors/hubErrors.sol";
 
 /// @notice Shared base for all hub unit tests
-/// @dev All hub tests inherit this — setUp and helpers live here once
+/// @dev All hub tests inherit this, setUp and helpers live here once
 abstract contract BaseHubTest is Test {
     // ── CCIP ──────────────────────────────────────────────────────────────
     CCIPLocalSimulator public ccipSimulator;
@@ -75,7 +75,7 @@ abstract contract BaseHubTest is Test {
         ccipSimulator.requestLinkFromFaucet(address(hub), 10 ether);
         ccipSimulator.requestLinkFromFaucet(address(spoke), 10 ether);
 
-        // alice deposits — this is the ONLY way hub gets USDC
+        // alice deposits: this is the only way hub gets USDC
         usdc.mint(alice, 10_000e6);
         vm.startPrank(alice);
         usdc.approve(address(hub), 10_000e6);
@@ -113,7 +113,7 @@ abstract contract BaseHubTest is Test {
         hub._requestAllBalanceReports(messageId);
     }
 
-    // Slot constants below verified via `forge inspect src/Hub.sol:HUB storage-layout` —
+    // Slot constants below verified via `forge inspect src/Hub.sol:HUB storage-layout`,
     // re-run and update whenever Hub.sol's state variable declarations change.
     function _setSpokeBalance(uint64 selector, uint256 amount) internal {
         bytes32 slot = keccak256(abi.encode(uint256(selector), uint256(11)));
@@ -159,19 +159,19 @@ abstract contract BaseHubTest is Test {
         // WI-4: RECALL_HAIRCUT_BPS (50 bps) caps each Path 3 leg at 99.5% of the spoke's
         // reported balance, as a stale-balance safety margin. A single-spoke withdrawal
         // whose shortfall equals exactly 100% of that spoke's balance is therefore
-        // structurally uncoverable — by design (see WithdrawPath3Test's dedicated
+        // structurally uncoverable, by design (see WithdrawPath3Test's dedicated
         // InsufficientRecallLiquidity tests). To let alice's FULL redemption still settle
         // successfully in these plumbing tests, _addPath3Headroom() adds a small second
         // depositor first so alice's claim is a bit less than 100% of the vault, leaving
         // genuine spare capacity in the spoke beyond the haircut margin.
         _addPath3Headroom();
-        // send 9_000 of alice's 10_000 to spoke — only 1_000 idle remains
-        // alice's shares worth 10_000 — idle (1_000) insufficient — Path 3
+        // send 9_000 of alice's 10_000 to spoke: only 1_000 idle remains
+        // alice's shares worth 10_000, idle (1_000) insufficient. Path 3
         _sendToSpoke(9_000e6);
     }
 
     /// @dev Adds a small second depositor so a full redemption of alice's original stake
-    /// does not require exactly 100% of a single spoke's balance — see _setupPath3().
+    /// does not require exactly 100% of a single spoke's balance, see _setupPath3().
     function _addPath3Headroom() internal {
         address headroomDepositor = makeAddr("headroomDepositor");
         usdc.mint(headroomDepositor, 500e6);
@@ -195,7 +195,7 @@ abstract contract BaseHubTest is Test {
     // Shared CCIP delivery helpers (FX-4)
     // =========================================================================
     // Bypass the router's auto-delivery and call HUB.ccipReceive directly (pranked as the
-    // router — exactly what CCIPReceiver's onlyRouter modifier permits) with hand-built
+    // router, exactly what CCIPReceiver's onlyRouter modifier permits) with hand-built
     // Any2EVMMessage payloads. Used wherever a test needs precise control over delivery
     // timing/order/content that CCIPLocalSimulator's synchronous auto-routing can't provide
     // (e.g. WI6_OutOfOrderDeliveryTest's reordering test, WI5's late-confirm-after-reconcile

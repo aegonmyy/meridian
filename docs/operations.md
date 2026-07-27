@@ -13,7 +13,7 @@ contract's LINK balance is insufficient to cover the fee:
 - **Hub-side sends** (`sendToSpoke`, `recallFromSpoke`, `rebalance`, `_requestAllBalanceReports`)
   are not wrapped in a queue-and-retry mechanism, the call reverts outright. This is a
   synchronous, caller-visible failure: the Rebalancer's transaction reverts, nothing is lost,
-  and the operator simply retries after topping up LINK. There is nothing to "recover" here
+  and the operator retries after topping up LINK. There is nothing to "recover" here
   because nothing was ever committed.
 - **Spoke-side confirm sends** (`CONFIRM_RECEIPT`, `CONFIRM_REBALANCE`, `CONFIRM_WITHDRAWAL`,
   the `REPORT_BALANCE` response) are the higher-stakes case, because by the time the outbound
@@ -21,7 +21,7 @@ contract's LINK balance is insufficient to cover the fee:
   withdrawals, or an intra-spoke rebalance). WI-2d's `_sendOrQueueConfirm` wraps these sends
   in `try/catch`: on failure, the confirm is persisted to the spoke's `pendingConfirms` queue
   (`ConfirmSendFailed` event) instead of reverting the whole handler and rolling back work
-  that already landed. **`retryConfirm(uint256 index)` is the recovery path**, permissionless,
+  that already landed. `retryConfirm(uint256 index)` is the recovery path, permissionless,
   callable by anyone once the spoke's LINK balance is topped up. It rebuilds the confirm
   message fresh (recomputing `spokeBalance` at retry time, not the stale value from the
   original failure) and resends it.
@@ -34,7 +34,7 @@ responsibility. As a starting operational baseline:
   [CCIP Directory](https://docs.chain.link/ccip/directory) for current lane fee estimates).
   Ten is a rough five-nines-uptime buffer for a lane an operator checks daily, tune down for
   higher-frequency spokes.
-- Alert immediately (page, not just log) if a `ConfirmSendFailed` event fires. Every minute
+- Page immediately, rather than only logging, if a `ConfirmSendFailed` event fires. Every minute
   the corresponding `PendingConfirm` stays unresolved is a minute the affected withdrawal or
   deposit's confirm is invisible to the hub, and (per WI-6) it also blocks `setHub` from
   rotating that spoke's Hub pointer.
@@ -73,33 +73,33 @@ Minimum event set to watch, per chain:
 | `inTransitAssets` stuck non-zero for a specific leg, CCIP Explorer shows FAILURE, manual execution exhausted | Dead lane / spoke decommissioned | Wait out `TRANSIT_RECONCILE_DELAY` (7 days), then owner calls `reconcileTransit(messageId)`, releases exactly that leg's tracked amount, nothing more |
 | Hub-side send reverts | LINK exhausted on hub, or `InsufficientUnreservedIdle` / `InsufficientRecallLiquidity` guard tripped | Top up LINK; or wait for idle/spoke capacity to recover before resubmitting |
 | `setHub` reverts with `PendingConfirmsOutstanding` | Spoke has an unresolved queued confirm | Resolve it via `retryConfirm` first (or wait it out) before rotating `HUB` |
-| `removeSpoke` reverts with `SpokeNotDrained` / `SpokeHasInFlightLegs` | Spoke still holds reported balance or has an in-flight DEPOSIT leg | Recall the balance to zero (`Rebalancer.recallFromSpoke`) and let in-flight legs land, then retry; or use `forceRemoveSpoke` if the situation is a genuine emergency (accepts an instant mispricing window, see its NatSpec) |
+| `removeSpoke` reverts with `SpokeNotDrained` / `SpokeHasInFlightLegs` | Spoke still holds reported balance or has an in-flight DEPOSIT leg | Recall the balance to zero (`Rebalancer.recallFromSpoke`) and let in-flight legs land, then retry; or use `forceRemoveSpoke` if the situation is an emergency (accepts an instant mispricing window, see its NatSpec) |
 
 ## Path 2 liveness composition
 
 `_allSpokesFresh()` requires **every** active spoke to have reported within `MAX_STALENESS`,
-not just the spokes involved in a given withdrawal. This means **one permanently-stale spoke
-blocks all Path 2 settlement globally**, for every user, not just withdrawals that touch that
-spoke. A spoke can go permanently stale for reasons that have nothing to do with its solvency:
-a redeployed spoke contract nobody re-registered, a decommissioned L2, or simply an operator
-who stopped triggering `REPORT_BALANCE` refreshes.
+whether or not that spoke is involved in the withdrawal being settled. So one permanently-stale
+spoke blocks all Path 2 settlement globally, for every user, including withdrawals that would
+never have touched that spoke. A spoke can go permanently stale for reasons that have nothing
+to do with its solvency: a redeployed spoke contract nobody re-registered, a decommissioned L2,
+or simply an operator who stopped triggering `REPORT_BALANCE` refreshes.
 
 If a spoke is stuck stale and is blocking Path 2 for the whole vault, the decision sequence
 is:
 
 1. **Diagnose first.** Is the spoke still solvent and reachable (just not reporting), or is it
-   genuinely dead? Check `lastReportTimestamp(selector)` and attempt a manual
+   dead? Check `lastReportTimestamp(selector)` and attempt a manual
    `_requestAllBalanceReports` round-trip (via any Path 2 withdrawal, or a dedicated
    maintenance call) before assuming it is unrecoverable.
 2. **If reachable but not reporting:** fix whatever is preventing its `REPORT_BALANCE`
    response (LINK balance on the spoke, `retryConfirm` if a confirm is queued). This is the
    cheapest fix and requires no hub-side state changes.
-3. **If genuinely dead and still funded:** it must be drained before it can be safely removed.
+3. **If dead and still funded:** it must be drained before it can be safely removed.
    `Rebalancer.recallFromSpoke` the reported balance back to hub idle (the WI-3 v1 operator
    flow), confirm via `RecallCompleted`, then `removeSpoke`. The WI-6 guard requires
    `spokeBalances[selector] == 0` and no in-flight legs, which this sequence satisfies.
-4. **If it cannot be drained** (the spoke contract itself is unresponsive/compromised, not
-   just its reporting), the only path is `forceRemoveSpoke`. Accept the instant
+4. **If it cannot be drained** (the spoke contract itself is unresponsive or compromised, a
+   deeper failure than a reporting gap), the only path is `forceRemoveSpoke`. Accept the instant
    `totalAssets()` mispricing window this causes (see its NatSpec), and be aware any
    in-flight `DEPOSIT` legs to that spoke become `NotSpoke`-poisoned and will eventually need
    `reconcileTransit` once `TRANSIT_RECONCILE_DELAY` elapses.
@@ -109,25 +109,25 @@ user, `_allSpokesFresh()` only iterates spokes with `exists == true`.
 
 ## Post-reject refresh
 
-After `rejectQuarantinedReport(selector)`, `spokeBalances[selector]` is **left exactly as it
-was before the suspicious report**, the rejected value is simply discarded, nothing is
+After `rejectQuarantinedReport(selector)`, `spokeBalances[selector]` is left exactly as it
+was before the suspicious report, the rejected value is discarded, nothing is
 recomputed. If the rejected report accompanied a token-carrying `CONFIRM_WITHDRAWAL` (WI-7's
 documented interaction: the quarantine only blocks the reported-*balance* write, never the
 token delivery), the tokens from that recall already landed in hub idle, but
-`spokeBalances[selector]` still reflects the OLD, pre-recall value, which **double-counts**
+`spokeBalances[selector]` still reflects the old, pre-recall value, which double-counts
 those just-recalled funds in `totalAssets()` (once as hub idle, once as the stale spoke
 balance) until the next legitimate report corrects it.
 
-**Operator action: after any `rejectQuarantinedReport`, force a fresh report promptly** rather
-than waiting for organic traffic to trigger one, do not leave `totalAssets()` overstated for
+**Operator action: after any `rejectQuarantinedReport`, force a fresh report promptly**, rather
+than waiting for organic traffic to trigger one. Do not leave `totalAssets()` overstated for
 however long it takes the next natural `REPORT_BALANCE`/`CONFIRM_*` message to arrive. A small
 `Rebalancer.recallFromSpoke` round-trip (even a nominal amount) is the fastest way to force a
 fresh, accurate report back from the spoke.
 
 ## Stuck return legs vs. stuck deposit legs
 
-`reconcileTransit` only covers **deposit legs** (hub to spoke, tracked via `inTransitAmount` /
-`transitLegs`). It has no counterpart for a stuck **return leg** (spoke to hub, a
+`reconcileTransit` only covers deposit legs (hub to spoke, tracked via `inTransitAmount` /
+`transitLegs`). It has no counterpart for a stuck return leg (spoke to hub, a
 `CONFIRM_WITHDRAWAL` or other confirm that never makes it back), that direction is recovered
 differently:
 
@@ -137,24 +137,24 @@ differently:
   is not the side that failed to send.
 - **Stuck return leg** (spoke pulled funds and tried to confirm, but the outbound send
   itself failed, LINK exhaustion, router hiccup): the spoke-side tool is
-  `retryConfirm(index)`, permissionless, no delay. This is a genuine resend, the funds never
+  `retryConfirm(index)`, permissionless, no delay. This one is a real resend: the funds never
   left the spoke in this failure mode (WI-2d's `_sendOrQueueConfirm` queues instead of
-  reverting the fund-touching work), so retrying is safe and immediate, not a last-resort
-  write-down.
+  reverting the fund-touching work), so retrying is safe and immediate rather than a
+  last-resort write-down.
 
-Point operators at the right tool for the direction: **hub-side accounting write-down
+Point operators at the right tool for the direction: hub-side accounting write-down
 (`reconcileTransit`) for stuck deposits, spoke-side resend (`retryConfirm`) for stuck
-returns.** Confusing the two wastes the `TRANSIT_RECONCILE_DELAY` wait on a problem
+returns. Confusing the two wastes the `TRANSIT_RECONCILE_DELAY` wait on a problem
 `retryConfirm` would have fixed immediately.
 
 ## UI guidance: prefer `redeem(shares)` over `withdraw(assets)`
 
 WI-4's claim-time pricing means the actual payout for a Path 2/3 withdrawal is
-`previewRedeem(shares)` recomputed **at settlement**, not the amount quoted at request time.
+`previewRedeem(shares)` recomputed at settlement, not the amount quoted at request time.
 For `redeem(shares, receiver, owner)`, the caller-specified `shares` is exactly what gets
 burned regardless of price movement, the semantics are unambiguous. For
 `withdraw(assets, receiver, owner)`, the caller names a USDC *amount*, which ERC4626 converts
-to shares via `previewWithdraw(assets)` **at request time**, that conversion is a quote, not
+to shares via `previewWithdraw(assets)` at request time, that conversion is a quote, not
 a promise, and the shares it locks in may end up worth more or less than `assets` by
 settlement.
 

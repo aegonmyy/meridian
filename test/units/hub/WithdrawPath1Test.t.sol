@@ -10,16 +10,16 @@ import {Vm} from "forge-std/Vm.sol";
 contract WithdrawPath1Test is BaseHubTest {
 
     // =========================================================================
-    // _withdraw Path 1 — idle covers + spokes fresh → immediate settlement
+    // _withdraw Path 1: idle covers + spokes fresh → immediate settlement
     // Setup: set fresh timestamp via vm.store, fresh actor deposits small amount
     // Hub has enough idle from alice's setUp deposit to cover betty's withdrawal
     // =========================================================================
 
     function test_withdraw_path1_burnsShares() public {
-        // fresh timestamp — Path 1 condition met
+        // fresh timestamp. Path 1 condition met
         _setLastReportTimestamp(chainSelector, block.timestamp);
 
-        // betty deposits small amount — hub has 10_000 idle, easily covers 1_000
+        // betty deposits small amount: hub has 10_000 idle, easily covers 1_000
         address betty = makeAddr("betty");
         usdc.mint(betty, 1_000e6);
         vm.startPrank(betty);
@@ -96,7 +96,7 @@ contract WithdrawPath1Test is BaseHubTest {
         vm.prank(betty);
         hub.withdraw(assets, betty, betty);
 
-        // Path 1 processes immediately — reservedAssets never stays elevated
+        // Path 1 processes immediately, reservedAssets never stays elevated
         assertEq(hub.reservedAssets(), 0);
     }
 
@@ -121,7 +121,7 @@ contract WithdrawPath1Test is BaseHubTest {
     }
 
     function test_withdraw_path1_fullWithdrawal_totalSupplyZero() public {
-        // both alice and betty fully withdraw — totalSupply goes to 0
+        // both alice and betty fully withdraw, totalSupply goes to 0
         _setLastReportTimestamp(chainSelector, block.timestamp);
 
         address betty = makeAddr("betty");
@@ -238,8 +238,8 @@ contract WithdrawPath1Test is BaseHubTest {
     // =========================================================================
 
     function test_allSpokesFresh_path1WhenFresh() public {
-        // fresh timestamp set — _allSpokesFresh returns true
-        // idle (10_000) covers alice's shares — Path 1 executes immediately
+        // fresh timestamp set, _allSpokesFresh returns true
+        // idle (10_000) covers alice's shares. Path 1 executes immediately
         _setLastReportTimestamp(chainSelector, block.timestamp);
 
         uint256 shares = hub.balanceOf(alice);
@@ -258,9 +258,9 @@ contract WithdrawPath1Test is BaseHubTest {
         // warp to a safe timestamp first to avoid underflow
         vm.warp(1 days);
 
-        // set stale timestamp — _allSpokesFresh returns false
-        // idle covers — Path 2: queue + request report balance
-        // CCIP synchronous — report arrives, withdrawal settles
+        // set stale timestamp, _allSpokesFresh returns false
+        // idle covers. Path 2: queue + request report balance
+        // CCIP synchronous, report arrives, withdrawal settles
         _setLastReportTimestamp(chainSelector, block.timestamp - 2 hours);
 
         uint256 shares = hub.balanceOf(alice);
@@ -279,8 +279,8 @@ contract WithdrawPath1Test is BaseHubTest {
     }
 
     function test_allSpokesFresh_returnsFalseWithNoSpokes() public {
-        // fresh hub with no spokes — _allSpokesFresh returns false
-        // idle covers — Path 2 but no spokes to send report to
+        // fresh hub with no spokes, _allSpokesFresh returns false
+        // idle covers. Path 2 but no spokes to send report to
         // withdrawal stays queued indefinitely
         vm.prank(owner);
         HUB freshHub = new HUB(
@@ -307,14 +307,14 @@ contract WithdrawPath1Test is BaseHubTest {
         vm.prank(betty);
         freshHub.withdraw(assets, betty, betty);
 
-        // no spokes to report — withdrawal stays queued
+        // no spokes to report: withdrawal stays queued
         assertEq(freshHub.reservedAssets(), assets);
         assertEq(usdc.balanceOf(betty), 0);
     }
 
     function test_allSpokesFresh_staleAfterWarp() public {
-        // set fresh then warp past MAX_STALENESS — becomes stale
-        // CCIP synchronous — Path 2 still settles via report balance
+        // set fresh then warp past MAX_STALENESS, becomes stale
+        // CCIP synchronous. Path 2 still settles via report balance
         vm.warp(1 days);
         _setLastReportTimestamp(chainSelector, block.timestamp);
         vm.warp(block.timestamp + 2 hours);
@@ -332,13 +332,13 @@ contract WithdrawPath1Test is BaseHubTest {
     }
 
     // =========================================================================
-    // Path 3 leg planning Tests (WI-4 — replaces the old single-best-spoke _findBestSpoke)
+    // Path 3 leg planning Tests (WI-4: replaces the old single-best-spoke _findBestSpoke)
     // =========================================================================
 
     /// @dev WI-4 replaces single-spoke selection with multi-leg planning across active
     /// spokes ordered by descending reported balance. This verifies that ordering directly
     /// via dispatched SentToSpoke events, using a scenario sized so the shortfall requires
-    /// both legs. spoke2 is a mock (non-contract) address — its leg dispatch never actually
+    /// both legs. spoke2 is a mock (non-contract) address. Its leg dispatch never actually
     /// delivers or confirms (CCIP to a non-contract address silently no-ops rather than
     /// reverting), so this test only asserts dispatch ORDER, not full settlement.
     function test_pathThree_multiLeg_ordersByDescendingBalance() public {
@@ -347,9 +347,9 @@ contract WithdrawPath1Test is BaseHubTest {
         vm.prank(owner);
         hub.addSpoke(selector2, mockSpoke2);
 
-        // real spoke funded with 3_000e6 — genuinely backed
+        // real spoke funded with 3_000e6, genuinely backed
         _sendToSpoke(3_000e6);
-        // mock spoke2 "reports" a higher balance via storage — narrow unit-test
+        // mock spoke2 "reports" a higher balance via storage, narrow unit-test
         // construction for ordering purposes only, consistent with existing
         // _setSpokeBalance conventions elsewhere in this suite.
         _setSpokeBalance(selector2, 5_000e6);
@@ -358,7 +358,7 @@ contract WithdrawPath1Test is BaseHubTest {
 
         // drain hub idle so a moderate withdrawal needs a multi-leg recall:
         // shortfall (5_500e6) > either spoke's single haircut-capped capacity alone
-        // (4_975e6 / 2_985e6) but <= their sum (7_960e6) — fully coverable across both.
+        // (4_975e6 / 2_985e6) but <= their sum (7_960e6), fully coverable across both.
         deal(address(usdc), address(hub), 500e6);
 
         vm.recordLogs();
@@ -372,8 +372,8 @@ contract WithdrawPath1Test is BaseHubTest {
     }
 
     /// @dev WI-4 fail-closed behavior: when even planning across every active spoke cannot
-    /// cover the shortfall (haircut-capped), the whole _withdraw call reverts —
-    /// InsufficientRecallLiquidity — instead of the old silent oversized single-spoke recall
+    /// cover the shortfall (haircut-capped), the whole _withdraw call reverts,
+    /// InsufficientRecallLiquidity: instead of the old silent oversized single-spoke recall
     /// that could permanently lock the user's shares. Shares stay with the user, nothing locks.
     function test_pathThree_revert_insufficientRecallLiquidity() public {
         uint64 selector2 = 9999;
@@ -386,7 +386,7 @@ contract WithdrawPath1Test is BaseHubTest {
         _setLastReportTimestamp(chainSelector, block.timestamp);
         _setLastReportTimestamp(selector2, block.timestamp);
 
-        // full redemption needs 100% of both spokes' reported balances combined —
+        // full redemption needs 100% of both spokes' reported balances combined,
         // structurally uncoverable under the RECALL_HAIRCUT_BPS margin.
         deal(address(usdc), address(hub), 100e6);
 
@@ -403,13 +403,13 @@ contract WithdrawPath1Test is BaseHubTest {
         );
         hub.withdraw(assets, alice, alice);
 
-        // fail-closed — nothing committed
+        // fail-closed, nothing committed
         assertEq(hub.balanceOf(alice), shares, "shares untouched");
         assertEq(hub.reservedAssets(), 0, "nothing reserved");
     }
 
     function test_findBestSpoke_singleSpoke() public {
-        // single spoke with real balance and headroom — Path 3 recalls from it and settles
+        // single spoke with real balance and headroom. Path 3 recalls from it and settles
         _addPath3Headroom();
         _setLastReportTimestamp(chainSelector, block.timestamp);
         _sendToSpoke(5_000e6);
@@ -420,7 +420,7 @@ contract WithdrawPath1Test is BaseHubTest {
         vm.prank(alice);
         hub.withdraw(assets, alice, alice);
 
-        // recalled from real spoke — CCIP synchronous — should settle
+        // recalled from real spoke, CCIP synchronous: should settle
         assertEq(hub.balanceOf(alice), 0);
     }
 

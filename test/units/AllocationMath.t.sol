@@ -39,7 +39,7 @@ contract AllocationMathsTest is Test {
     }
 
     function test_netApy_zeroCosts() public pure {
-        // no costs — net equals gross
+        // no costs, net equals gross
         uint256 result = AllocationMaths.netApy(300, 0);
         assertEq(result, 300);
     }
@@ -50,7 +50,7 @@ contract AllocationMathsTest is Test {
     }
 
     function test_netApy_revert_underflow() public {
-        // costs exceed gross — underflow via external harness
+        // costs exceed gross, underflow via external harness
         vm.expectRevert();
         harness.netApy(100, 200);
     }
@@ -70,7 +70,7 @@ contract AllocationMathsTest is Test {
     }
 
     function test_weightedApy_twoMarkets_equalSplit() public pure {
-        // 5000 bps each — one at 400 bps, one at 600 bps
+        // 5000 bps each, one at 400 bps, one at 600 bps
         // weighted = (5000 * 400 + 5000 * 600) / 10000 = 500
         uint256[] memory allocations = new uint256[](2);
         uint256[] memory apys = new uint256[](2);
@@ -108,7 +108,7 @@ contract AllocationMathsTest is Test {
     }
 
     function test_weightedApy_revert_arrayLengthMismatch() public {
-        // mismatched arrays — revert via external harness
+        // mismatched arrays: revert via external harness
         uint256[] memory allocations = new uint256[](2);
         uint256[] memory apys = new uint256[](3);
         vm.expectRevert(arrayOutOfBound.selector);
@@ -117,17 +117,17 @@ contract AllocationMathsTest is Test {
 
     // =========================================================================
     // validateAllocation
-    // Single chain cap is 8000 bps — must use two chains for 10000 total
+    // Single chain cap is 8000 bps: must use two chains for 10000 total
     // =========================================================================
 
     function test_validateAllocation_validSingleChain() public pure {
-        // single chain max is 8000 — split across two chains
+        // single chain max is 8000, split across two chains
         uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](2);
         allocations[1] = new uint256[](1);
         allocations[0][0] = 4_000; // chain 1 market A
-        allocations[0][1] = 4_000; // chain 1 market B — chain 1 total = 8000
-        allocations[1][0] = 2_000; // chain 2 — chain 2 total = 2000
+        allocations[0][1] = 4_000; // chain 1 market B, chain 1 total = 8000
+        allocations[1][0] = 2_000; // chain 2, chain 2 total = 2000
         assertTrue(AllocationMaths.validateAllocation(allocations));
     }
 
@@ -154,7 +154,7 @@ contract AllocationMathsTest is Test {
     }
 
     function test_validateAllocation_revert_belowMinimum() public pure {
-        // 499 bps — below 500 minimum (but not zero)
+        // 499 bps, below 500 minimum (but not zero)
         uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](1);
         allocations[1] = new uint256[](1);
@@ -164,19 +164,19 @@ contract AllocationMathsTest is Test {
     }
 
     function test_validateAllocation_zeroAllowedAsMinimum() public pure {
-        // zero is allowed — means market not used
+        // zero is allowed: means market not used
         // use two chains so total doesn't exceed 8000 on one chain
         uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](2);
         allocations[1] = new uint256[](1);
-        allocations[0][0] = 0; // zero market — allowed
+        allocations[0][0] = 0; // zero market, allowed
         allocations[0][1] = 6_000; // chain 1 = 6000
         allocations[1][0] = 4_000; // chain 2 = 4000
         assertTrue(AllocationMaths.validateAllocation(allocations));
     }
 
     function test_validateAllocation_revert_exceedsMaxPerMarket() public pure {
-        // 6001 bps — exceeds 6000 max per market
+        // 6001 bps, exceeds 6000 max per market
         uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](1);
         allocations[1] = new uint256[](1);
@@ -186,13 +186,13 @@ contract AllocationMathsTest is Test {
     }
 
     function test_validateAllocation_exactlyMaxPerMarket() public pure {
-        // exactly 6000 bps per market — two chains so no chain cap exceeded
+        // exactly 6000 bps per market: two chains so no chain cap exceeded
         uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](1);
         allocations[1] = new uint256[](2);
         allocations[0][0] = 6_000; // chain 1 = 6000
         allocations[1][0] = 2_000; // chain 2 market A
-        allocations[1][1] = 2_000; // chain 2 market B — chain 2 = 4000
+        allocations[1][1] = 2_000; // chain 2 market B, chain 2 = 4000
         assertTrue(AllocationMaths.validateAllocation(allocations));
     }
 
@@ -200,7 +200,7 @@ contract AllocationMathsTest is Test {
         public
         pure
     {
-        // single chain with 8001 bps — exceeds 8000 max chain concentration
+        // single chain with 8001 bps, exceeds 8000 max chain concentration
         uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](2);
         allocations[1] = new uint256[](1);
@@ -214,7 +214,7 @@ contract AllocationMathsTest is Test {
         public
         pure
     {
-        // exactly 8000 bps on one chain — should pass
+        // exactly 8000 bps on one chain: should pass
         uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](2);
         allocations[1] = new uint256[](1);
@@ -232,7 +232,7 @@ contract AllocationMathsTest is Test {
         public
         pure
     {
-        // optimal 550 bps, current 500 bps — gain of 50 bps exactly
+        // optimal 550 bps, current 500 bps, gain of 50 bps exactly
         assertTrue(AllocationMaths.shouldRebalance(500, 550));
     }
 
@@ -240,7 +240,7 @@ contract AllocationMathsTest is Test {
         public
         pure
     {
-        // optimal 700 bps, current 500 bps — gain of 200 bps
+        // optimal 700 bps, current 500 bps, gain of 200 bps
         assertTrue(AllocationMaths.shouldRebalance(500, 700));
     }
 
@@ -248,22 +248,22 @@ contract AllocationMathsTest is Test {
         public
         pure
     {
-        // optimal 549 bps, current 500 bps — gain of 49 bps — below 50 threshold
+        // optimal 549 bps, current 500 bps, gain of 49 bps, below 50 threshold
         assertFalse(AllocationMaths.shouldRebalance(500, 549));
     }
 
     function test_shouldRebalance_returnsFalseWhenEqual() public pure {
-        // same apy — no reason to rebalance
+        // same apy, no reason to rebalance
         assertFalse(AllocationMaths.shouldRebalance(500, 500));
     }
 
     function test_shouldRebalance_returnsFalseWhenOptimalWorse() public pure {
-        // optimal lower than current — definitely don't rebalance
+        // optimal lower than current, definitely don't rebalance
         assertFalse(AllocationMaths.shouldRebalance(600, 500));
     }
 
     function test_shouldRebalance_exactlyThreshold() public pure {
-        // exactly 50 bps gain — should return true (>= 50)
+        // exactly 50 bps gain: should return true (>= 50)
         assertTrue(AllocationMaths.shouldRebalance(500, 550));
     }
 
@@ -272,7 +272,7 @@ contract AllocationMathsTest is Test {
     // =========================================================================
 
     function test_validateSingleMove_validAllocation() public pure {
-        // max single allocation 3000 bps = 30% — should pass
+        // max single allocation 3000 bps = 30%: should pass
         uint256[][] memory allocations = new uint256[][](1);
         allocations[0] = new uint256[](1);
         allocations[0][0] = 3_000; // exactly 30%
@@ -282,7 +282,7 @@ contract AllocationMathsTest is Test {
     }
 
     function test_validateSingleMove_revert_exceedsMaxMove() public pure {
-        // 3001 bps = 30.01% — exceeds 30% max
+        // 3001 bps = 30.01%, exceeds 30% max
         uint256[][] memory allocations = new uint256[][](1);
         allocations[0] = new uint256[](1);
         allocations[0][0] = 3_001;
@@ -307,15 +307,15 @@ contract AllocationMathsTest is Test {
         uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](1);
         allocations[1] = new uint256[](1);
-        allocations[0][0] = 2_000; // 20% — valid
-        allocations[1][0] = 3_500; // 35% — invalid
+        allocations[0][0] = 2_000; // 20%, valid
+        allocations[1][0] = 3_500; // 35%, invalid
         assertFalse(
             AllocationMaths.validateSingleMove(allocations, 1_000_000e6)
         );
     }
 
     function test_validateSingleMove_zeroAllocation() public pure {
-        // zero allocation — always passes
+        // zero allocation: always passes
         uint256[][] memory allocations = new uint256[][](1);
         allocations[0] = new uint256[](1);
         allocations[0][0] = 0;
@@ -325,7 +325,7 @@ contract AllocationMathsTest is Test {
     }
 
     function test_validateSingleMove_zeroTotalAssets() public pure {
-        // zero totalAssets — all amounts are 0 — passes
+        // zero totalAssets: all amounts are 0, passes
         uint256[][] memory allocations = new uint256[][](1);
         allocations[0] = new uint256[](1);
         allocations[0][0] = 5_000;

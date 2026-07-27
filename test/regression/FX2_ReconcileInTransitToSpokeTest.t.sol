@@ -4,17 +4,17 @@ pragma solidity 0.8.33;
 import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
 import {SpokeHasInFlightLegs} from "../../src/errors/hubErrors.sol";
 
-/// @notice FX-2 regression — reconcileTransit must decrement inTransitToSpoke for the
+/// @notice FX-2 regression, reconcileTransit must decrement inTransitToSpoke for the
 ///         reconciled leg's origin selector, or the safe removeSpoke path is permanently
 ///         blocked for that selector even after full drain.
 contract FX2_ReconcileInTransitToSpokeTest is BaseHubTest {
     /// @notice Reproduces the defect: reconcile a stuck deposit leg, drain the spoke to
-    /// zero balance, then removeSpoke — pre-fix this reverts SpokeHasInFlightLegs forever
+    /// zero balance, then removeSpoke: pre-fix this reverts SpokeHasInFlightLegs forever
     /// because inTransitToSpoke[selector] was never decremented by reconcileTransit.
     function test_fx2_removeSpokeSucceeds_afterReconcileAndDrain() public {
         // Send a deposit, then simulate it getting stuck (never confirmed) by directly
         // incrementing inTransitToSpoke the same way _sendToSpoke does, alongside a fake
-        // tracked leg — this mirrors "the confirm never arrives" without relying on a
+        // tracked leg: this mirrors "the confirm never arrives" without relying on a
         // mock spoke plumbing quirk, matching the WI5 test file's established pattern.
         _sendToSpoke(3_000e6); // real, resolves synchronously; spoke now has 3_000e6
 
@@ -30,7 +30,7 @@ contract FX2_ReconcileInTransitToSpokeTest is BaseHubTest {
         _recallFromSpoke(3_000e6, recallId);
         assertEq(hub.spokeBalances(chainSelector), 0, "spoke fully drained");
 
-        // still blocked — one in-flight leg remains
+        // still blocked, one in-flight leg remains
         vm.prank(owner);
         vm.expectRevert(SpokeHasInFlightLegs.selector);
         hub.removeSpoke(chainSelector);
@@ -50,7 +50,7 @@ contract FX2_ReconcileInTransitToSpokeTest is BaseHubTest {
         assertFalse(exists, "spoke removed via the safe path");
     }
 
-    // Slot constants verified via `forge inspect src/Hub.sol:HUB storage-layout` — re-run
+    // Slot constants verified via `forge inspect src/Hub.sol:HUB storage-layout`, re-run
     // and update whenever Hub.sol's state variable declarations change.
     function _setInTransitAmount(bytes32 id, uint256 amount) internal {
         bytes32 slot = keccak256(abi.encode(id, uint256(16)));

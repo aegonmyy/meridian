@@ -12,7 +12,7 @@ const AT = path.resolve(__dirname, "..");
 export const INFRA = JSON.parse(fs.readFileSync(path.join(AT, "testnet-infra.json"), "utf8"));
 
 // The operator god-key already present in the repo (run-live.mjs). It owns Hub, Rebalancer,
-// AgentConsumer and is the registered AGENT. Funded on all 4 chains. Testnet only — rotate
+// AgentConsumer and is the registered AGENT. Funded on all 4 chains. Testnet only, rotate
 // before any mainnet use (see DECISIONS.md SECURITY).
 export const DEPLOYER_KEY =
   process.env.DEPLOYER_KEY ||

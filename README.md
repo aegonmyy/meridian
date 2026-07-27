@@ -91,7 +91,7 @@ export ARBITRUM_RPC_URL=https://your-arbitrum-rpc
 forge test --match-contract FullFlowTest -vvv
 ```
 
-Deployment scripts reside in `script/`: `DeployTestnet.s.sol` for the live testnet deployment listed below, `DeployForkSimulation.s.sol` for local fork-based rehearsal. See [docs/development.md](docs/development.md) for the complete build, test, and deploy procedure.
+Deployment scripts are in `script/`: `DeployTestnet.s.sol` for the live testnet deployment listed below, `DeployForkSimulation.s.sol` for local fork-based rehearsal. See [docs/development.md](docs/development.md) for the complete build, test, and deploy procedure.
 
 ## Documentation
 

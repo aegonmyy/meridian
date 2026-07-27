@@ -6,10 +6,10 @@ import {MockYieldSource} from "../../mocks/mockYield.sol";
 import {CCIPHelpers} from "../../../src/libraries/CCIPHelpers.sol";
 import {NotRebalancer, SpokeNotFound} from "../../../src/errors/hubErrors.sol";
 
-/// @notice Tests for hub.rebalance — intra-spoke capital movement
+/// @notice Tests for hub.rebalance, intra-spoke capital movement
 /// Hub sends REBALANCE message to spoke via CCIP
 /// Spoke withdraws from source adapter and deposits into target adapter
-/// No tokens leave the chain — hub USDC and inTransitAssets unchanged
+/// No tokens leave the chain, hub USDC and inTransitAssets unchanged
 contract RebalanceTest is BaseHubTest {
 
     function test_rebalance_sourceAdapterDecreases() public {

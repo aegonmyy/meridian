@@ -34,6 +34,9 @@ error SpokeAlreadyRegistered();
 /// @notice Thrown when spoke is not registered
 error SpokeNotFound();
 
+/// @notice Thrown when addSpokes receives selector and address arrays of differing length
+error MismatchedArrayLengths();
+
 ///@notice Thrown when provided spoke already exists
 error SpokeExists();
 

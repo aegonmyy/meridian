@@ -295,13 +295,59 @@ contract RebalancerTest is Test {
         new Rebalancer(address(0), agentConsumer, owner);
     }
 
-    function test_constructor_revert_zeroAgentConsumer() public {
-        vm.expectRevert(Rebalancer.InvalidConstructorArguments.selector);
-        new Rebalancer(address(hub), address(0), owner);
+    function test_constructor_zeroAgentConsumer_accepted() public {
+        // Factory migration: AgentConsumer is now optional. A zero address no longer
+        // reverts — it means "no managed off-chain agent for this tenant," and the
+        // owner becomes the sole authorized caller.
+        Rebalancer agentless = new Rebalancer(address(hub), address(0), owner);
+        assertEq(agentless.AGENT_CONSUMER(), address(0));
     }
 
     function test_constructor_revert_zeroOwner() public {
         vm.expectRevert(Rebalancer.InvalidConstructorArguments.selector);
         new Rebalancer(address(hub), agentConsumer, address(0));
+    }
+
+    // =========================================================================
+    // ownership handoff (Ownable2Step)
+    // =========================================================================
+
+    function test_acceptOwnership_completesHandoff() public {
+        address newOwner = makeAddr("newOwner");
+
+        vm.prank(owner);
+        rebalancer.transferOwnership(newOwner);
+
+        // Pending, not yet complete — old owner is still owner until acceptOwnership.
+        assertEq(rebalancer.owner(), owner);
+        assertEq(rebalancer.pendingOwner(), newOwner);
+
+        vm.prank(newOwner);
+        rebalancer.acceptOwnership();
+
+        assertEq(rebalancer.owner(), newOwner);
+        assertEq(rebalancer.pendingOwner(), address(0));
+
+        // New owner is now authorized; old owner is not.
+        vm.prank(newOwner);
+        rebalancer.addChainToWhitelist(chainSelector);
+
+        vm.prank(owner);
+        vm.expectRevert(Rebalancer.NotAuthorized.selector);
+        rebalancer.addChainToWhitelist(chainSelector);
+    }
+
+    function test_agentless_ownerAuthorized_randomRejected() public {
+        Rebalancer agentless = new Rebalancer(address(hub), address(0), owner);
+
+        // Owner is authorized even with no AgentConsumer set.
+        vm.prank(owner);
+        agentless.addChainToWhitelist(chainSelector);
+
+        // A random, non-owner caller is rejected — an unset AGENT_CONSUMER (address(0))
+        // must never match an arbitrary caller.
+        vm.prank(attacker);
+        vm.expectRevert(Rebalancer.NotAuthorized.selector);
+        agentless.addChainToWhitelist(chainSelector);
     }
 }

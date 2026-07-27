@@ -2,7 +2,7 @@
 pragma solidity 0.8.33;
 
 import {HubStorage} from "./HubStorage.sol";
-import {ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, NothingToReconcile, ReconcileTooEarly, SpokeNotDrained, SpokeHasInFlightLegs, NoQuarantinedReport} from "../errors/hubErrors.sol";
+import {ZeroAddress, SpokeNotFound, SpokeAlreadyRegistered, NothingToReconcile, ReconcileTooEarly, SpokeNotDrained, SpokeHasInFlightLegs, NoQuarantinedReport, MismatchedArrayLengths} from "../errors/hubErrors.sol";
 
 /// @title HubAdminModule
 /// @notice Owner-only administrative surface: spoke registry management, misc owner setters,
@@ -102,6 +102,46 @@ abstract contract HubAdminModule is HubStorage {
         spokes[_chainSelector].spoke = _spokeAddress;
         spokes[_chainSelector].exists = true;
         emit SpokeAdded(_chainSelector, _spokeAddress);
+    }
+
+    /// @notice Batch-registers spokes in one call — the return-trip helper for the permissionless
+    ///         factory flow, where a tenant's SpokeFactory.createSpoke calls land on separate
+    ///         chains and need to be registered back onto the Hub together.
+    /// @dev Strictly additive: inlines the exact per-entry logic of addSpoke, unchanged above,
+    ///      so behavior is identical to calling addSpoke in a loop. Only new surface is the
+    ///      length-match guard.
+    /// @param _chainSelectors CCIP chain selectors to register, same order as _spokeAddresses
+    /// @param _spokeAddresses SpokeVault addresses to register, same order as _chainSelectors
+    function addSpokes(
+        uint64[] calldata _chainSelectors,
+        address[] calldata _spokeAddresses
+    ) external onlyOwner {
+        if (_chainSelectors.length != _spokeAddresses.length) {
+            revert MismatchedArrayLengths();
+        }
+        for (uint256 i = 0; i < _chainSelectors.length; i++) {
+            uint64 _chainSelector = _chainSelectors[i];
+            address _spokeAddress = _spokeAddresses[i];
+            if (_spokeAddress == address(0)) revert ZeroAddress();
+            uint64 existingSelector = addressToSelector[_spokeAddress];
+            if (existingSelector != 0 && existingSelector != _chainSelector) {
+                revert SpokeAlreadyRegistered();
+            }
+            if (!spokes[_chainSelector].everRegistered) {
+                spokeChainSelectors.push(_chainSelector);
+                spokes[_chainSelector].everRegistered = true;
+                addressToSelector[_spokeAddress] = _chainSelector;
+            } else {
+                address oldSpoke = spokes[_chainSelector].spoke;
+                if (addressToSelector[oldSpoke] == _chainSelector) {
+                    delete addressToSelector[oldSpoke];
+                }
+                addressToSelector[_spokeAddress] = _chainSelector;
+            }
+            spokes[_chainSelector].spoke = _spokeAddress;
+            spokes[_chainSelector].exists = true;
+            emit SpokeAdded(_chainSelector, _spokeAddress);
+        }
     }
 
     /// @notice Disables a spoke by setting its exists flag to false — safe path, default choice

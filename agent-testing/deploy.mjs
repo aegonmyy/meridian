@@ -1,4 +1,4 @@
-// Fresh Meridian deployment orchestrator — Aave x3 on real testnet CCIP.
+// Fresh Meridian deployment orchestrator. Aave x3 on real testnet CCIP.
 // Resumable: writes agent-testing/deployment.json after every step; re-running skips
 // finished steps. Sequence + gotchas derived from src/ (see DECISIONS.md §1).
 //
@@ -17,7 +17,7 @@ const LINK_FUND = ethers.parseEther("3"); // LINK per contract for CCIP fees
 
 // Some testnet RPCs (seen on Alchemy OP-Sepolia) return a false revert from eth_estimateGas
 // even when the tx is valid (verified by a raw eth_call succeeding). Set GAS_LIMIT to bypass
-// estimation with an explicit cap — unused gas is not charged, so a generous value is safe.
+// estimation with an explicit cap: unused gas is not charged, so a generous value is safe.
 const OVERRIDES = process.env.GAS_LIMIT ? { gasLimit: BigInt(process.env.GAS_LIMIT) } : {};
 
 async function deploy(signer, art, args, label) {
@@ -34,7 +34,7 @@ async function fundLink(chain, signer, linkAddr, target, amount, label) {
   const link = new ethers.Contract(linkAddr, ERC20_ABI, signer);
   const bal = await link.balanceOf(target);
   if (bal >= amount) {
-    console.log(`  ${label} already holds ${fmtEth(bal)} LINK — skip funding`);
+    console.log(`  ${label} already holds ${fmtEth(bal)} LINK, skipping funding`);
     return;
   }
   const tx = await link.transfer(target, amount, OVERRIDES);
@@ -60,7 +60,7 @@ async function deployHub() {
 
   // 2+3. Rebalancer + AgentConsumer via counterfactual address prediction (gotcha G1).
   //      Both immutable + revert on zero, so predict AC's address before deploying Rebalancer.
-  //      Must run as a pair — if AC fails, the Rebalancer is mis-wired and both are redone.
+  //      Must run as a pair: if AC fails, the Rebalancer is mis-wired and both are redone.
   if (!d.hub.rebalancer || !d.hub.agentConsumer) {
     const n = await provider(chain).getTransactionCount(signer.address, "pending");
     const predictedAC = ethers.getCreateAddress({ from: signer.address, nonce: n + 1 });
@@ -70,7 +70,7 @@ async function deployHub() {
     const agentConsumer = await deploy(signer, ART.AgentConsumer,
       [rebalancer, signer.address, signer.address], "AgentConsumer");
     if (agentConsumer.toLowerCase() !== predictedAC.toLowerCase())
-      throw new Error(`AC prediction MISS: got ${agentConsumer}, predicted ${predictedAC} — Rebalancer mis-wired, aborting`);
+      throw new Error(`AC prediction MISS: got ${agentConsumer}, predicted ${predictedAC}. Rebalancer mis-wired, aborting`);
     d.hub.rebalancer = rebalancer;
     d.hub.agentConsumer = agentConsumer;
     saveDeployment(d);

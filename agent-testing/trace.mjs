@@ -4,12 +4,12 @@
 //   node agent-testing/trace.mjs <sepoliaTxHash>
 //
 // Layers (source of truth is the protocol/chain state, not the CCIP Explorer UI):
-//   L1 SOURCE   — did the send even enter CCIP? (receipt revert OR SentToSpoke messageIds)
-//   L2 IN-FLIGHT— hub in-transit accounting for the internal messageId + CCIP Explorer URL
+//   L1 SOURCE: did the send even enter CCIP? (receipt revert OR SentToSpoke messageIds)
+//   L2 IN-FLIGHT: hub in-transit accounting for the internal messageId + CCIP Explorer URL
 //                 + best-effort dest OffRamp ExecutionStateChanged(ccipMessageId)
-//   L3 DEST     — did funds land, and where? spoke idle USDC vs adapter aUSDC
+//   L3 DEST: did funds land, and where? spoke idle USDC vs adapter aUSDC
 //                 (distinguishes "delivered but adapter deposit skipped" from "in Aave")
-//   L4 CONFIRM  — did CONFIRM_RECEIPT return? hub inTransitToSpoke / spokeBalances updated;
+//   L4 CONFIRM: did CONFIRM_RECEIPT return? hub inTransitToSpoke / spokeBalances updated;
 //                 DepositInstructionFailed / ConfirmSendFailed on the spoke
 import { ethers } from "ethers";
 import {
@@ -75,7 +75,7 @@ async function main() {
       const [internalMessageId, amount] = ethers.AbiCoder.defaultAbiCoder().decode(["bytes32", "uint256"], l.data);
       return { chainSelector, ccipMessageId, internalMessageId, amount };
     });
-  if (legs.length === 0) { console.log("L1: tx mined but emitted no SentToSpoke — not a deposit send?"); return; }
+  if (legs.length === 0) { console.log("L1: tx mined but emitted no SentToSpoke, so probably not a deposit send"); return; }
   console.log(`L1 SOURCE: ${legs.length} DEPOSIT leg(s) entered CCIP (block ${rc.blockNumber}).\n`);
 
   for (const leg of legs) {
@@ -107,10 +107,10 @@ async function main() {
     // verdict
     let verdict;
     if (inAave > 0n && exec?.state === "SUCCESS") verdict = "DELIVERED & DEPLOYED to Aave ✓";
-    else if (exec?.state === "SUCCESS" && spokeIdle > 0n && inAave === 0n) verdict = "DELIVERED but adapter deposit SKIPPED (funds idle on spoke — check DepositInstructionFailed / adapter)";
-    else if (exec?.state === "FAILURE") verdict = "CCIP execution FAILED on dest — inspect OffRamp returnData / re-execute";
-    else if (inTransit > 0n) verdict = `IN FLIGHT — ${ageMin} min elapsed (Sepolia→L2 is finality-bound, ~15-20 min typical). Not a failure yet.`;
-    else verdict = "indeterminate — check CCIP Explorer";
+    else if (exec?.state === "SUCCESS" && spokeIdle > 0n && inAave === 0n) verdict = "DELIVERED but adapter deposit SKIPPED (funds idle on spoke, check DepositInstructionFailed / adapter)";
+    else if (exec?.state === "FAILURE") verdict = "CCIP execution FAILED on dest, inspect OffRamp returnData / re-execute";
+    else if (inTransit > 0n) verdict = `IN FLIGHT: ${ageMin} min elapsed (Sepolia→L2 is finality-bound, ~15-20 min typical). Not a failure yet.`;
+    else verdict = "indeterminate, check CCIP Explorer";
     console.log(`   VERDICT: ${verdict}\n`);
   }
 }

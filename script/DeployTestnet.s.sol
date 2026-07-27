@@ -9,21 +9,21 @@ import {AgentConsumer} from "../src/AgentConsumer.sol";
 import {AaveAdapter} from "../src/adapters/AaveAdapter.sol";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Meridian Testnet Deployment — Three-phase script for real networks
+// Meridian testnet deployment: three-phase script for real networks
 //
 // This script deploys the full Meridian stack across Ethereum Sepolia (hub)
 // and Arbitrum Sepolia (spoke). Each phase targets a single chain and is run
 // separately with the matching --rpc-url flag.
 //
-// Phase 1 — Hub stack on Ethereum Sepolia (DeployHub)
-// Phase 2 — Spoke + adapters on Arbitrum Sepolia (DeployArbSpoke)
-// Phase 3 — Register spoke on hub, back on Sepolia (RegisterSpoke)
+// Phase 1: hub stack on Ethereum Sepolia (DeployHub)
+// Phase 2: spoke and adapters on Arbitrum Sepolia (DeployArbSpoke)
+// Phase 3: register spoke on hub, back on Sepolia (RegisterSpoke)
 //
 // Required .env:
-//   DEPLOYER_KEY          — private key, must have ETH on both chains
-//   AGENT_ADDRESS         — address of the off-chain agent EOA
-//   HUB_ADDRESS           — (phases 2 & 3) address output from phase 1
-//   SPOKE_ADDRESS         — (phase 3 only) address output from phase 2
+//   DEPLOYER_KEY: private key, must have ETH on both chains
+//   AGENT_ADDRESS: address of the off-chain agent EOA
+//   HUB_ADDRESS: (phases 2 and 3) address output from phase 1
+//   SPOKE_ADDRESS: (phase 3 only) address output from phase 2
 //
 // After deployment, fund manually:
 //   • Hub contract with Sepolia LINK (CCIP fees for outbound messages)
@@ -44,7 +44,7 @@ bytes32 constant COMPOUND = keccak256("COMPOUND");
 bytes32 constant MORPHO   = keccak256("MORPHO");
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 1 — Hub stack on Ethereum Sepolia
+// Phase 1: hub stack on Ethereum Sepolia
 //
 // forge script script/DeployTestnet.s.sol:DeployHub \
 //   --rpc-url $SEPOLIA_RPC_URL \
@@ -53,10 +53,10 @@ bytes32 constant MORPHO   = keccak256("MORPHO");
 //   -vvv
 // ─────────────────────────────────────────────────────────────────────────────
 contract DeployHub is Script {
-    // Ethereum Sepolia — verified from docs.chain.link/ccip/directory/testnet
+    // Ethereum Sepolia, verified from docs.chain.link/ccip/directory/testnet
     address constant CCIP_ROUTER = 0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59;
     address constant LINK        = 0x779877A7B0D9E8603169DdbD7836e478b4624789;
-    // Circle testnet USDC on Sepolia — https://faucet.circle.com
+    // Circle testnet USDC on Sepolia, https://faucet.circle.com
     address constant USDC        = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238;
 
     function run() external {
@@ -64,9 +64,9 @@ contract DeployHub is Script {
         address deployer    = vm.addr(deployerKey);
         address agent       = vm.envAddress("AGENT_ADDRESS");
 
-        // Pre-compute future contract addresses using current nonce so we can
-        // break the Rebalancer ↔ AgentConsumer circular dependency in a single
-        // broadcast pass without deploying any placeholder contracts.
+        // Pre-compute future contract addresses from the current nonce, which breaks
+        // the Rebalancer to AgentConsumer circular dependency in a single broadcast
+        // pass without deploying any placeholder contracts.
         uint256 nonce = vm.getNonce(deployer);
         // nonce+0 → Hub
         // nonce+1 → Rebalancer (needs AgentConsumer address up front)
@@ -150,7 +150,7 @@ contract DeployHub is Script {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 2 — Arbitrum Sepolia spoke + Aave adapter
+// Phase 2: Arbitrum Sepolia spoke and Aave adapter
 //
 // forge script script/DeployTestnet.s.sol:DeployArbSpoke \
 //   --rpc-url $ARB_SEPOLIA_RPC_URL \
@@ -161,12 +161,12 @@ contract DeployHub is Script {
 // Required env: HUB_ADDRESS
 // ─────────────────────────────────────────────────────────────────────────────
 contract DeployArbSpoke is Script {
-    // Arbitrum Sepolia — verified from docs.chain.link/ccip/directory/testnet
+    // Arbitrum Sepolia, verified from docs.chain.link/ccip/directory/testnet
     address constant CCIP_ROUTER = 0x2a9C5afB0d0e4BAb2BCdaE109EC4b0c4Be15a165;
     address constant LINK        = 0xb1D4538B4571d411F07960EF2838Ce337FE1E80E;
-    // Circle testnet USDC on Arbitrum Sepolia — same address used by CCIP token pool
+    // Circle testnet USDC on Arbitrum Sepolia: same address used by CCIP token pool
     address constant USDC        = 0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d;
-    // Aave V3 Arbitrum Sepolia — from bgd-labs/aave-address-book AaveV3ArbitrumSepolia.sol
+    // Aave V3 Arbitrum Sepolia, from bgd-labs/aave-address-book AaveV3ArbitrumSepolia.sol
     address constant AAVE_POOL   = 0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff;
     address constant AAVE_AUSDC  = 0x460b97BD498E1157530AEb3086301d5225b91216;
 
@@ -187,7 +187,7 @@ contract DeployArbSpoke is Script {
         );
 
         // Aave V3 is confirmed deployed on Arbitrum Sepolia.
-        // Compound V3 and Morpho are not reliably available on Arbitrum Sepolia testnet —
+        // Compound V3 and Morpho are not reliably available on Arbitrum Sepolia testnet,
         // add those adapters once you confirm their addresses.
         AaveAdapter aaveAdapter = new AaveAdapter(AAVE_POOL, AAVE_AUSDC, USDC);
         spoke.setAdapter(AAVE, address(aaveAdapter));
@@ -226,7 +226,7 @@ contract DeployArbSpoke is Script {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 4 — Base Sepolia spoke
+// Phase 4: Base Sepolia spoke
 //
 // forge script script/DeployTestnet.s.sol:DeployBaseSpoke \
 //   --rpc-url $BASE_SEPOLIA_RPC_URL \
@@ -236,7 +236,7 @@ contract DeployArbSpoke is Script {
 // Required env: HUB_ADDRESS
 // ─────────────────────────────────────────────────────────────────────────────
 contract DeployBaseSpoke is Script {
-    // Base Sepolia — docs.chain.link/ccip/directory/testnet
+    // Base Sepolia, docs.chain.link/ccip/directory/testnet
     address constant CCIP_ROUTER = 0xD3b06cEbF099CE7DA4AcCf578aaebFDBd6e88a93;
     address constant LINK        = 0xE4aB69C077896252FAFBD49EFD26B5D171A32410;
     // Circle testnet USDC on Base Sepolia
@@ -277,7 +277,7 @@ contract DeployBaseSpoke is Script {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 5 — OP Sepolia spoke
+// Phase 5: OP Sepolia spoke
 //
 // forge script script/DeployTestnet.s.sol:DeployOptimismSpoke \
 //   --rpc-url $OP_SEPOLIA_RPC_URL \
@@ -289,7 +289,7 @@ contract DeployBaseSpoke is Script {
 //       Rebalancer first via WhitelistOpSepolia below.
 // ─────────────────────────────────────────────────────────────────────────────
 contract DeployOptimismSpoke is Script {
-    // OP Sepolia — docs.chain.link/ccip/directory/testnet
+    // OP Sepolia, docs.chain.link/ccip/directory/testnet
     address constant CCIP_ROUTER = 0x114A20A10b43D4115e5aeef7345a1A71d2a60C57;
     address constant LINK        = 0xE4aB69C077896252FAFBD49EFD26B5D171A32410;
     // Circle testnet USDC on OP Sepolia
@@ -331,8 +331,8 @@ contract DeployOptimismSpoke is Script {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Utility — Whitelist OP Sepolia on Rebalancer (run on Sepolia)
-// OP Sepolia was not whitelisted in Phase 1 — run this before RegisterSpoke.
+// Utility: whitelist OP Sepolia on Rebalancer (run on Sepolia)
+// OP Sepolia was not whitelisted in Phase 1, so run this before RegisterSpoke.
 // ─────────────────────────────────────────────────────────────────────────────
 contract WhitelistOpSepolia is Script {
     function run() external {
@@ -348,7 +348,7 @@ contract WhitelistOpSepolia is Script {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase — Deploy adapters on Base Sepolia and register with spoke
+// Phase: deploy adapters on Base Sepolia and register with spoke
 //
 // forge script script/DeployTestnet.s.sol:DeployBaseAdapters \
 //   --rpc-url $BASE_SEPOLIA_RPC_URL \
@@ -359,7 +359,7 @@ contract WhitelistOpSepolia is Script {
 // ─────────────────────────────────────────────────────────────────────────────
 contract DeployBaseAdapters is Script {
     address constant USDC       = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
-    // Aave v3 Base Sepolia — confirmed via PoolAddressesProvider 0xd449FeD...
+    // Aave v3 Base Sepolia, confirmed via PoolAddressesProvider 0xd449FeD...
     address constant AAVE_POOL  = 0x07eA79F68B2B3df564D0A34F8e19D9B1e339814b;
     address constant AAVE_AUSDC = 0xf53B60F4006cab2b3C4688ce41fD5362427A2A66;
 
@@ -381,7 +381,7 @@ contract DeployBaseAdapters is Script {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 3 — Register spoke on hub (run back on Sepolia)
+// Phase 3: register spoke on hub (run back on Sepolia)
 //
 // forge script script/DeployTestnet.s.sol:RegisterSpoke \
 //   --rpc-url $SEPOLIA_RPC_URL \
@@ -419,7 +419,7 @@ contract RegisterSpoke is Script {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Utility — Redeploy Rebalancer + AgentConsumer (resets 24h cooldown)
+// Utility: redeploy Rebalancer and AgentConsumer (resets 24h cooldown)
 //           then points Hub at the new Rebalancer.
 //
 // forge script script/DeployTestnet.s.sol:RedeployCore \

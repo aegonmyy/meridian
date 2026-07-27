@@ -22,12 +22,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///      forge script script/Deploy.s.sol --rpc-url $ETH_RPC_URL -vvv
 ///
 ///      Required env vars:
-///        ETH_RPC_URL      — Ethereum mainnet fork RPC
-///        ARBITRUM_RPC_URL — Arbitrum mainnet fork RPC
-///        BASE_RPC_URL     — Base mainnet fork RPC
-///        OPTIMISM_RPC_URL — Optimism mainnet fork RPC
-///        DEPLOYER_KEY     — Private key for deployment
-///        AGENT_ADDRESS    — Address of the off-chain agent wallet
+///        ETH_RPC_URL: Ethereum mainnet fork RPC
+///        ARBITRUM_RPC_URL: Arbitrum mainnet fork RPC
+///        BASE_RPC_URL: Base mainnet fork RPC
+///        OPTIMISM_RPC_URL: Optimism mainnet fork RPC
+///        DEPLOYER_KEY: private key for deployment
+///        AGENT_ADDRESS: address of the off-chain agent wallet
 
 contract Deploy is Script, StdCheats {
     // =========================================================================
@@ -39,7 +39,7 @@ contract Deploy is Script, StdCheats {
     uint64 constant ETH_SELECTOR = 5009297550715157269;
 
     // =========================================================================
-    // Mainnet Addresses — Ethereum
+    // Mainnet addresses: Ethereum
     // =========================================================================
     address constant ETH_CCIP_ROUTER =
         0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D;
@@ -47,7 +47,7 @@ contract Deploy is Script, StdCheats {
     address constant ETH_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
 
     // =========================================================================
-    // Mainnet Addresses — Arbitrum
+    // Mainnet addresses: Arbitrum
     // =========================================================================
     address constant ARB_CCIP_ROUTER =
         0x141fa059441E0ca23ce184B6A78bafD2A517DdE8;
@@ -71,7 +71,7 @@ contract Deploy is Script, StdCheats {
     uint256 constant ARB_MORPHO_LLTV = 860000000000000000; // 86%
 
     // =========================================================================
-    // Mainnet Addresses — Base
+    // Mainnet addresses: Base
     // =========================================================================
     address constant BASE_CCIP_ROUTER =
         0x881e3A65B4d4a04dD529061dd0071cf975F58bCD;
@@ -95,7 +95,7 @@ contract Deploy is Script, StdCheats {
     uint256 constant BASE_MORPHO_LLTV = 860000000000000000; // 86%
 
     // =========================================================================
-    // Mainnet Addresses — Optimism
+    // Mainnet addresses: Optimism
     // =========================================================================
     address constant OP_CCIP_ROUTER =
         0x3206695CaE29952f4b0c22a169725a865bc8Ce0f;

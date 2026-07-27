@@ -4,26 +4,26 @@ pragma solidity 0.8.33;
 import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-/// @notice FX-7 regression — pendingLegs must be written into the pending entry BEFORE the
+/// @notice FX-7 regression, pendingLegs must be written into the pending entry BEFORE the
 ///         leg-dispatch loop runs, not after.
 /// @dev The concrete manifestation: with the write AFTER the loop, a leg that arrives
 ///      synchronously WHILE the dispatch loop is still running for later legs finds
 ///      `pendingLegs` still at its zero-initialized value (the real value, legCount, isn't
-///      written until the whole loop finishes) — so `_handleWithdrawalCallback`'s
+///      written until the whole loop finishes): so `_handleWithdrawalCallback`'s
 ///      `if (pendingLegs > 0) pendingLegs -= 1` guard is false and the decrement for that
 ///      ALREADY-ARRIVED leg is silently skipped. Once the loop finally finishes and writes
 ///      `pendingLegs = legCount` (the full original count, ignorant of the leg that already
 ///      landed), the entry permanently OVERCOUNTS its outstanding legs by one per
-///      mid-loop arrival — which can never fully reach 0 again once the truly-last leg
+///      mid-loop arrival: which can never fully reach 0 again once the truly-last leg
 ///      arrives, permanently blocking FX-1's Path 3 settlement gate. This only manifests in
 ///      a synchronous harness (production CCIP always resolves dispatch and confirm-arrival
-///      in separate transactions, so the post-loop write always completes first) — but
+///      in separate transactions, so the post-loop write always completes first), but
 ///      writing pendingLegs before dispatch makes the harness behavior match production
 ///      ordering, which is the point of this fix.
 contract FX7_PendingLegsOrderingTest is BaseHubTest {
     function test_fx7_pendingLegsSetBeforeDispatch_midLoopArrivalDecrementsCorrectly() public {
-        // second spoke — mock EOA, never resolves its own leg synchronously (this harness's
-        // established limitation for genuinely-distinct multi-spoke delivery — see
+        // second spoke: mock EOA, never resolves its own leg synchronously (this harness's
+        // established limitation for genuinely-distinct multi-spoke delivery, see
         // WI3_TwoPhaseRebalanceTest), but its reported balance still counts during Path 3's
         // planning pass, and its leg still gets accounted for in legCount.
         uint64 selector2 = 9999;
@@ -32,8 +32,8 @@ contract FX7_PendingLegsOrderingTest is BaseHubTest {
         hub.addSpoke(selector2, mockSpoke2);
 
         // real spoke funded with the HIGHER balance so it's processed FIRST in
-        // _spokesByDescendingBalance's order — its confirm lands synchronously during the
-        // very first iteration of the dispatch loop, before the second leg is even sent —
+        // _spokesByDescendingBalance's order: its confirm lands synchronously during the
+        // very first iteration of the dispatch loop, before the second leg is even sent,
         // i.e. genuinely "mid-loop" relative to the trailing pendingLegs write.
         _sendToSpoke(4_000e6);
         _setSpokeBalance(selector2, 3_000e6);
@@ -70,7 +70,7 @@ contract FX7_PendingLegsOrderingTest is BaseHubTest {
         assertGt(entryArrivedAssets, 0, "leg1's arrival was credited");
 
         // The real assertion: leg1 has already arrived, so exactly ONE leg (leg2, to the
-        // mock spoke) remains outstanding — pendingLegs must read 1, not 2. Pre-fix, the
+        // mock spoke) remains outstanding, pendingLegs must read 1, not 2. Pre-fix, the
         // post-loop write stomps this back to the full original legCount (2), silently
         // discarding leg1's already-processed arrival and permanently overcounting.
         assertEq(

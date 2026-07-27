@@ -10,7 +10,7 @@ import {NotRebalancer, SpokeNotFound} from "../../../src/errors/hubErrors.sol";
 contract DepositFlowTest is BaseHubTest {
 
     // =========================================================================
-    // sendToSpoke — DEPOSIT flow
+    // sendToSpoke, DEPOSIT flow
     // Hub sends USDC + instructions to spoke via CCIP
     // Spoke deposits into adapter, sends CONFIRM_RECEIPT back
     // =========================================================================
@@ -36,7 +36,7 @@ contract DepositFlowTest is BaseHubTest {
     }
 
     function test_sendToSpoke_totalAssetsUnchangedAfterRoundTrip() public {
-        // capital moved from idle to spoke — totalAssets unchanged
+        // capital moved from idle to spoke, totalAssets unchanged
         uint256 totalBefore = hub.totalAssets();
         _sendToSpoke(5_000e6);
         assertEq(hub.totalAssets(), totalBefore);
@@ -86,11 +86,11 @@ contract DepositFlowTest is BaseHubTest {
     }
 
     // =========================================================================
-    // Yield flow — REPORT_BALANCE and CONFIRM_RECEIPT carry spoke balance
+    // Yield flow, REPORT_BALANCE and CONFIRM_RECEIPT carry spoke balance
     // =========================================================================
 
     function test_confirmReceipt_spokeBalanceEqualsDepositAmount() public {
-        // CONFIRM_RECEIPT reports balance at time of deposit — no yield yet
+        // CONFIRM_RECEIPT reports balance at time of deposit, no yield yet
         _sendToSpoke(5_000e6);
         assertEq(hub.spokeBalances(chainSelector), 5_000e6);
     }
@@ -114,7 +114,7 @@ contract DepositFlowTest is BaseHubTest {
     }
 
     function test_reportBalance_matchesConfirmReceiptWhenNoYield() public {
-        // no yield between deposit and report — balances should match
+        // no yield between deposit and report: balances should match
         _sendToSpoke(5_000e6);
         uint256 balanceAfterDeposit = hub.spokeBalances(chainSelector);
         _triggerReportBalance();
@@ -124,7 +124,7 @@ contract DepositFlowTest is BaseHubTest {
     function test_reportBalance_differsFromConfirmReceiptWhenYieldAccrued()
         public
     {
-        // yield accrued between deposit and report — report should be higher
+        // yield accrued between deposit and report: report should be higher
         _sendToSpoke(5_000e6);
         uint256 balanceAfterDeposit = hub.spokeBalances(chainSelector);
         aaveAdapter.simulateYield(150e6);
@@ -149,7 +149,7 @@ contract DepositFlowTest is BaseHubTest {
     function test_inTransitAssets_decrementedAfterConfirmReceipt() public {
         assertEq(hub.inTransitAssets(), 0);
         _sendToSpoke(5_000e6);
-        // CCIP synchronous — CONFIRM_RECEIPT already fired
+        // CCIP synchronous, CONFIRM_RECEIPT already fired
         assertEq(hub.inTransitAssets(), 0);
     }
 

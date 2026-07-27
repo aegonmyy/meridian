@@ -47,7 +47,7 @@ contract SpokeVaultInvariant is StdInvariant, Test {
     /// @dev activeAdapters length never decreases
     function invariant_activeAdaptersLengthNeverDecreases() public view {
         assertGe(spoke.activeAdaptersLength(), 0);
-        // length should equal ghost tracker — only grows
+        // length should equal ghost tracker: only grows
         assertEq(
             spoke.activeAdaptersLength(),
             handler.ghostActiveAdaptersLength()

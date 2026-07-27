@@ -3,13 +3,13 @@ pragma solidity 0.8.33;
 
 import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
 
-/// @notice FX-5 regression — forceRemoveSpoke must zero the dangling spokeBalances (and
+/// @notice FX-5 regression, forceRemoveSpoke must zero the dangling spokeBalances (and
 ///         inTransitToSpoke) it leaves behind, or a later re-add via addSpoke instantly
 ///         resurrects the stale balance into totalAssets().
 contract FX5_ForceRemoveReAddTest is BaseHubTest {
     /// @notice Reproduces the defect: fund a spoke, forceRemove it (funded balance excluded
     /// from totalAssets, as documented/intended), then re-add the SAME selector via
-    /// addSpoke — pre-fix, totalAssets() instantly jumps back up by the stale balance the
+    /// addSpoke, pre-fix, totalAssets() instantly jumps back up by the stale balance the
     /// moment the selector becomes active again, even though the underlying capital may
     /// have been compromised or drained in the interim.
     function test_fx5_reAddAfterForceRemove_doesNotResurrectStaleBalance() public {
@@ -30,7 +30,7 @@ contract FX5_ForceRemoveReAddTest is BaseHubTest {
         vm.prank(owner);
         hub.addSpoke(chainSelector, newSpokeAddress);
 
-        // the stale 3_000e6 must NOT resurrect — the new spoke has reported nothing yet
+        // the stale 3_000e6 must not resurrect: the new spoke has reported nothing yet
         assertEq(
             hub.spokeBalances(chainSelector),
             0,
@@ -43,7 +43,7 @@ contract FX5_ForceRemoveReAddTest is BaseHubTest {
         );
     }
 
-    /// @notice inTransitToSpoke is also zeroed — those legs' confirms can never land once
+    /// @notice inTransitToSpoke is also zeroed: those legs' confirms can never land once
     /// the spoke is force-removed (NotSpoke), so the counter would otherwise dangle forever
     /// and permanently block the safe removeSpoke path on any future re-add + re-remove.
     function test_fx5_forceRemoveSpoke_zerosInTransitToSpoke() public {
@@ -61,8 +61,8 @@ contract FX5_ForceRemoveReAddTest is BaseHubTest {
     }
 
     /// @notice After force-remove + re-add, the safe removeSpoke path works once the
-    /// re-added spoke is itself genuinely drained (proves the counters are clean, not just
-    /// zeroed once and silently broken for future guard checks).
+    /// re-added spoke is itself drained (proves the counters stay clean, rather than being
+    /// zeroed once and then silently broken for future guard checks).
     function test_fx5_removeSpoke_worksOnReAddedSpoke_onceDrained() public {
         _sendToSpoke(2_000e6);
 
@@ -72,7 +72,7 @@ contract FX5_ForceRemoveReAddTest is BaseHubTest {
         vm.prank(owner);
         hub.addSpoke(chainSelector, address(spoke)); // re-point back to the same real spoke
 
-        // spoke's real adapter still holds 2_000e6, but hub's spokeBalances was zeroed —
+        // spoke's real adapter still holds 2_000e6, but hub's spokeBalances was zeroed,
         // report balance to resync hub's view with reality before it can be safely removed
         vm.warp(block.timestamp + 1 hours);
         _triggerReportBalance();

@@ -12,11 +12,11 @@ import {CCIPHelpers} from "../../src/libraries/CCIPHelpers.sol";
 
 /// @title WI3_TwoPhaseRebalanceTest
 /// @notice Integration test for the WI-3 v1 operator flow: recall capital off a spoke,
-///         await confirmation, then deploy the now-idle funds back out — end to end,
+///         await confirmation, then deploy the now-idle funds back out, end to end,
 ///         hub <-> spoke, using the real Rebalancer + Hub + Spoke stack over CCIP.
 /// @dev NOTE on scope: `CCIPLocalSimulator` (the non-fork local simulator used everywhere
 ///      else in this test suite outside FullFlowTest) hardcodes a single fixed chain
-///      selector for every message it routes — `message.sourceChainSelector` on delivery
+///      selector for every message it routes, `message.sourceChainSelector` on delivery
 ///      to the hub is always that one constant, regardless of what destination selector a
 ///      sender passed to `ccipSend`. Two independently-addressed "chains" (spoke A on
 ///      selector X, spoke B on selector Y) therefore cannot be faithfully simulated without
@@ -24,10 +24,10 @@ import {CCIPHelpers} from "../../src/libraries/CCIPHelpers.sol";
 ///      which requires ETH_RPC_URL/ARBITRUM_RPC_URL env vars not available in this
 ///      environment). This test instead exercises the full recall -> confirm -> redeploy
 ///      round trip against a single spoke, moving capital between two adapters (AAVE and
-///      COMPOUND) rather than two chains — the mechanics under test (Rebalancer.recallFromSpoke
+///      COMPOUND) rather than two chains: the mechanics under test (Rebalancer.recallFromSpoke
 ///      -> CONFIRM_WITHDRAWAL -> RecallCompleted -> sendToSpoke -> CONFIRM_RECEIPT) are
 ///      identical; only the "two chains" framing had to be adapted to this harness's
-///      constraints. See docs/revert-audit.md and the executor's final report for this
+///      constraints. See docs/revert-audit.md for this
 ///      divergence.
 contract WI3_TwoPhaseRebalanceTest is Test {
     CCIPLocalSimulator public ccipSimulator;
@@ -116,10 +116,10 @@ contract WI3_TwoPhaseRebalanceTest is Test {
 
     /// @notice Two-phase rebalance: recall all capital off AAVE back to hub idle, confirm
     /// lands, then deploy that idle into COMPOUND. Demonstrates the WI-3 "move weight off
-    /// a chain" lever end to end — capital previously could only leave a spoke via a
+    /// a chain" lever end to end: capital previously could only leave a spoke via a
     /// user-triggered Path 3 withdrawal.
     function test_wi3_recallThenDeploy_endToEnd() public {
-        // phase 0 — deploy all capital into AAVE
+        // phase 0, deploy all capital into AAVE
         CCIPHelpers.AdapterInstructions[]
             memory depositInstructions = new CCIPHelpers.AdapterInstructions[](1);
         depositInstructions[0] = CCIPHelpers.AdapterInstructions({
@@ -135,7 +135,7 @@ contract WI3_TwoPhaseRebalanceTest is Test {
         assertEq(hub.spokeBalances(chainSelector), 10_000e6, "hub sees spoke balance");
         assertEq(hub.idleBalance(), 0, "hub idle drained");
 
-        // phase 1 — recall all capital off the spoke via the new Rebalancer entrypoint
+        // phase 1, recall all capital off the spoke via the new Rebalancer entrypoint
         vm.recordLogs();
         vm.prank(owner);
         rebalancer.recallFromSpoke(chainSelector, 10_000e6);
@@ -144,13 +144,13 @@ contract WI3_TwoPhaseRebalanceTest is Test {
         assertEq(hub.idleBalance(), 10_000e6, "recalled funds are hub idle");
         assertEq(hub.spokeBalances(chainSelector), 0, "hub sees spoke drained");
 
-        // RecallCompleted fired — confirms the off-chain agent's sequencing signal exists
+        // RecallCompleted fired: confirms the off-chain agent's sequencing signal exists
         assertTrue(
             _hasRecallCompletedLog(chainSelector, 10_000e6),
             "RecallCompleted not emitted with expected args"
         );
 
-        // phase 2 — deploy the now-idle capital into COMPOUND
+        // phase 2: deploy the now-idle capital into COMPOUND
         CCIPHelpers.AdapterInstructions[]
             memory redeployInstructions = new CCIPHelpers.AdapterInstructions[](1);
         redeployInstructions[0] = CCIPHelpers.AdapterInstructions({

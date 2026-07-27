@@ -10,9 +10,9 @@ import {PendingConfirmsOutstanding} from "../../src/errors/spokeErrors.sol";
 import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
 import {CCIPHelpers} from "../../src/libraries/CCIPHelpers.sol";
 
-/// @notice FX-6a regression — setHub's unresolved-confirm guard must reflect a maintained
+/// @notice FX-6a regression, setHub's unresolved-confirm guard must reflect a maintained
 ///         counter, not a linear scan that would grow unbounded with queue history.
-///         (Correctness-equivalent either way in a single test — this suite verifies the
+///         (Correctness-equivalent either way in a single test. This suite verifies the
 ///         counter tracks queue/resolve transitions correctly across multiple entries.)
 contract FX6_SpokeHardeningTest is Test {
     CCIPLocalSimulator public ccipSimulator;
@@ -50,8 +50,8 @@ contract FX6_SpokeHardeningTest is Test {
     }
 
     /// @notice unresolvedConfirmCount increments on queue and decrements on resolve, and
-    /// setHub's guard reflects it correctly across multiple entries (not just a single
-    /// queue/resolve pair).
+    /// setHub's guard reflects it correctly across multiple entries, rather than only a
+    /// single queue/resolve pair.
     function test_fx6a_unresolvedConfirmCount_tracksQueueAndResolve() public {
         assertEq(spoke.unresolvedConfirmCount(), 0);
 
@@ -96,7 +96,7 @@ contract FX6_SpokeHardeningTest is Test {
         vm.store(address(spoke), bytes32(base + 2), bytes32(uint256(0)));
         vm.store(address(spoke), bytes32(base + 3), bytes32(uint256(0))); // resolved = false
 
-        // unresolvedConfirmCount — mirror what _queueConfirm does, since this helper
+        // unresolvedConfirmCount: mirror what _queueConfirm does, since this helper
         // bypasses it via direct storage injection (see FX-6 commit for the real slot).
         _bumpUnresolvedConfirmCount(1);
     }
@@ -122,15 +122,15 @@ contract FX6_SpokeHardeningTest is Test {
     }
 
     function _unresolvedConfirmCountSlot() internal pure returns (bytes32) {
-        // slot 5 — verified via `forge inspect src/Spoke.sol:SpokeVault storage-layout`
+        // slot 5, verified via `forge inspect src/Spoke.sol:SpokeVault storage-layout`
         return bytes32(uint256(5));
     }
 }
 
-/// @notice FX-6b regression — a protocol-level adapter withdraw failure (paused pool, frozen
+/// @notice FX-6b regression: a protocol-level adapter withdraw failure (paused pool, frozen
 ///         market) inside the WITHDRAW_AMOUNT recall pull loop must not hard-revert the
 ///         whole handler. Min-capping alone doesn't prevent this class of failure (unlike
-///         the insufficient-balance case it does prevent) — only try/catch does.
+///         the insufficient-balance case it does prevent): only try/catch does.
 contract FX6b_RecallPullFailedTest is BaseHubTest {
     /// @notice Two adapters funded equally; one is forced to revert on withdraw. A Path 3
     /// recall needing both must still complete (partial), reporting the truthful actual
@@ -143,7 +143,7 @@ contract FX6b_RecallPullFailedTest is BaseHubTest {
         // haircut-capped capacity to plan the leg at all (see BaseHubTest._setupPath3).
         _addPath3Headroom();
 
-        // deploy 3_000e6 to each adapter — spoke idle stays 0, hub idle = 10_500 - 6_000
+        // deploy 3_000e6 to each adapter: spoke idle stays 0, hub idle = 10_500 - 6_000
         CCIPHelpers.AdapterInstructions[]
             memory instructions = new CCIPHelpers.AdapterInstructions[](2);
         instructions[0] = CCIPHelpers.AdapterInstructions({
@@ -169,14 +169,14 @@ contract FX6b_RecallPullFailedTest is BaseHubTest {
 
         vm.recordLogs();
         vm.prank(alice);
-        hub.redeem(aliceShares, alice, alice); // Path 3 — must not revert despite COMPOUND's failure
+        hub.redeem(aliceShares, alice, alice); // Path 3: must not revert despite COMPOUND's failure
 
-        // AAVE's half of the pull succeeded; COMPOUND's failed and was skipped — the
+        // AAVE's half of the pull succeeded; COMPOUND's failed and was skipped. The
         // recall lands PARTIAL, not zero and not reverted.
         assertLt(aaveAdapter.totalAssets(), 3_000e6, "AAVE was pulled from");
         assertEq(compoundAdapter.totalAssets(), 3_000e6, "COMPOUND untouched, its pull failed");
 
-        // the withdrawal must NOT have paid out the full quote — only a partial amount
+        // the withdrawal must not have paid out the full quote. Only a partial amount
         // arrived, so settlement correctly defers rather than overpaying from other
         // depositors' idle.
         assertLt(usdc.balanceOf(alice), quotedPayout, "must not have received the full quote");

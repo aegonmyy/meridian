@@ -6,12 +6,12 @@ import {CCIPHelpers} from "../../../src/libraries/CCIPHelpers.sol";
 import {NotRebalancer, SpokeNotFound} from "../../../src/errors/hubErrors.sol";
 
 /// @notice Tests for _withdraw Path 3 and recallFromSpoke
-/// Path 3 — idle insufficient → recall shortfall from best spoke
+/// Path 3, idle insufficient → recall shortfall from best spoke
 /// Setup: send 9_000 to spoke, 1_000 idle remains, alice's shares worth 10_000
 contract WithdrawPath3Test is BaseHubTest {
 
     // =========================================================================
-    // _withdraw Path 3 — idle insufficient → recall from best spoke
+    // _withdraw Path 3, idle insufficient → recall from best spoke
     // =========================================================================
 
     function test_withdraw_path3_aliceReceivesUSDC() public {
@@ -51,7 +51,7 @@ contract WithdrawPath3Test is BaseHubTest {
         hub.redeem(aliceShares, alice, alice);
 
         // WI-4: spoke sends back exactly the shortfall (headroom from the second
-        // depositor added by _setupPath3 means this is < the spoke's full balance —
+        // depositor added by _setupPath3 means this is < the spoke's full balance,
         // the remainder is the second depositor's still-deployed share).
         assertEq(
             hub.spokeBalances(chainSelector),
@@ -103,7 +103,7 @@ contract WithdrawPath3Test is BaseHubTest {
 
     function test_withdraw_path3_onlyRecallsShortfall() public {
         _addPath3Headroom();
-// send 9_000 to spoke — hub has 1_000 idle, spoke has 9_000
+// send 9_000 to spoke: hub has 1_000 idle, spoke has 9_000
         _sendToSpoke(9_000e6);
 
         uint256 idleBefore = usdc.balanceOf(address(hub));
@@ -114,7 +114,7 @@ contract WithdrawPath3Test is BaseHubTest {
         vm.prank(alice);
         hub.redeem(aliceShares, alice, alice);
 
-        // spoke only sent back shortfall — remaining balance = original - shortfall
+        // spoke only sent back shortfall, remaining balance = original - shortfall
         assertEq(hub.spokeBalances(chainSelector), 9_000e6 - shortfall);
     }
 
@@ -137,7 +137,7 @@ _sendToSpoke(9_000e6);
     // Hub receives CONFIRM_WITHDRAWAL callback and updates accounting
     // =========================================================================
 
-    // ── Scenario 1 — no pending withdrawal ────────────────────────────────────
+    // ── Scenario 1: no pending withdrawal ────────────────────────────────────
 
     function test_recallFromSpoke_hubUSDCBalanceIncreases() public {
         _sendToSpoke(5_000e6);
@@ -184,7 +184,7 @@ _sendToSpoke(9_000e6);
         assertEq(hub.totalAssets(), totalBefore);
     }
 
-    // ── Scenario 2 — pending withdrawal exists ────────────────────────────────
+    // ── Scenario 2: pending withdrawal exists ────────────────────────────────
 
     function test_recallFromSpoke_pendingWithdrawal_userReceivesUSDC() public {
         _addPath3Headroom();

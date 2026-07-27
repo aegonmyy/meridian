@@ -5,7 +5,7 @@ import {BaseHubTest} from "../units/hub/BaseHubTest.t.sol";
 import {MockYieldSource} from "../mocks/mockYield.sol";
 import {CCIPHelpers} from "../../src/libraries/CCIPHelpers.sol";
 
-/// @notice WI-2 regressions — spoke resilience: idle accounting, capped pulls,
+/// @notice WI-2 regressions, spoke resilience: idle accounting, capped pulls,
 ///         defensive fund-touching handlers.
 contract WI2_SpokeResilienceTest is BaseHubTest {
     /// @notice Pre-fix: a DEPOSIT instruction referencing a removed adapter hard-reverts
@@ -52,7 +52,7 @@ contract WI2_SpokeResilienceTest is BaseHubTest {
             compoundAdapter.totalAssets();
 
         bytes32 messageId = _generateMessageId(address(hub));
-        // full exact recall — must not revert
+        // full exact recall: must not revert
         _recallFromSpoke(totalDeployed, messageId);
 
         assertEq(aaveAdapter.totalAssets(), 0);
@@ -62,7 +62,7 @@ contract WI2_SpokeResilienceTest is BaseHubTest {
     /// @notice Pre-fix: a recall for more than adapters actually hold either reverts or
     /// silently attaches the over-requested amount as the CCIP token amount (which would
     /// fail token transfer). Post-fix: the spoke pulls what it can and truthfully reports
-    /// actualPulled via the token envelope — hub accounting reflects reality, not the ask.
+    /// actualPulled via the token envelope, hub accounting reflects reality, not the ask.
     function test_wi2_recall_exceedingRealBalance_returnsPartialTruthfully() public {
         _sendToSpoke(5_000e6); // hub idle 5_000e6 remains, spoke/Aave holds 5_000e6
 
@@ -71,7 +71,7 @@ contract WI2_SpokeResilienceTest is BaseHubTest {
         uint256 requested = available + 2_000e6; // ask for more than exists
 
         bytes32 messageId = _generateMessageId(address(hub));
-        // must not revert — degrades to partial recall
+        // must not revert, degrades to partial recall
         _recallFromSpoke(requested, messageId);
 
         // hub only actually received what was truthfully available
@@ -79,7 +79,7 @@ contract WI2_SpokeResilienceTest is BaseHubTest {
         assertEq(aaveAdapter.totalAssets(), 0);
     }
 
-    /// @notice Pre-fix: _aggregatedSpokeBalance sums adapter totals only — a direct USDC
+    /// @notice Pre-fix: _aggregatedSpokeBalance sums adapter totals only. A direct USDC
     /// transfer to the spoke (e.g. leftover idle from a partial deploy) is invisible to
     /// the hub's accounting. Post-fix: idle is first-class in the aggregate.
     /// @dev The direct transfer is sized within WI-7's REPORT_DUST allowance so this test

@@ -8,7 +8,7 @@ import {MockYieldSource} from "../mocks/mockYield.sol";
 
 // =========================================================================
 // getAllocations Tests
-// Returns AdapterBalances[] — one entry per registered adapter
+// Returns AdapterBalances[], one entry per registered adapter
 // Includes inactive adapters as zero-initialized entries
 // Array length always equals activeAdapters.length
 // =========================================================================
@@ -59,7 +59,7 @@ contract GetAllocationsTest is Test {
     // ── tests ─────────────────────────────────────────────────────────────
 
     function test_getAllocations_emptyWhenNoAdapters() public view {
-        // no adapters registered — returns empty array
+        // no adapters registered: returns empty array
         SpokeVault.AdapterBalances[] memory result = spoke.getAllocations();
         assertEq(result.length, 0);
     }
@@ -126,9 +126,9 @@ contract GetAllocationsTest is Test {
 
         SpokeVault.AdapterBalances[] memory result = spoke.getAllocations();
 
-        // array still length 2 — removed adapter is zero-initialized
+        // array still length 2: removed adapter is zero-initialized
         assertEq(result.length, 2);
-        // removed adapter entry — protocolId bytes32(0) and balance 0
+        // removed adapter entry, protocolId bytes32(0) and balance 0
         assertEq(result[0].protocolId, bytes32(0));
         assertEq(result[0].balance, 0);
         // compound still correct
@@ -168,7 +168,7 @@ contract GetAllocationsTest is Test {
 
         SpokeVault.AdapterBalances[] memory result = spoke.getAllocations();
 
-        // array length unchanged after remove — soft delete
+        // array length unchanged after remove, soft delete
         assertEq(result.length, 2);
         assertEq(result.length, spoke.activeAdaptersLength());
     }
@@ -186,7 +186,7 @@ contract GetAllocationsTest is Test {
 
         SpokeVault.AdapterBalances[] memory result = spoke.getAllocations();
 
-        // no duplicate — length still 1
+        // no duplicate, length still 1
         assertEq(result.length, 1);
         assertEq(result[0].protocolId, AAVE);
         assertEq(result[0].balance, 4_000e6);

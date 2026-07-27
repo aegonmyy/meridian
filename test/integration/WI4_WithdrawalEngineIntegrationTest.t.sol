@@ -16,7 +16,7 @@ import {CCIPHelpers} from "../../src/libraries/CCIPHelpers.sol";
 ///         harmless orphan.
 /// @dev Two independently-selectored spokes settling in parallel legs cannot be faithfully
 ///      simulated with the non-fork CCIPLocalSimulator (see WI3_TwoPhaseRebalanceTest's
-///      documented limitation — sourceChainSelector is a single hardcoded constant for
+///      documented limitation, sourceChainSelector is a single hardcoded constant for
 ///      every delivery). This suite instead exercises Path 3's full recall -> arrival ->
 ///      claim-time settlement pipeline against a single real spoke, which is sufficient to
 ///      prove the arrival/settlement mechanics (destTokenAmounts trust, claim-time
@@ -91,7 +91,7 @@ contract WI4_WithdrawalEngineIntegrationTest is Test {
     /// not the requested leg amount, and the withdrawal fully settles when the leg lands.
     function test_wi4_pathThree_settlesWithActualArrivedAmount() public {
         // deploy 9_000e6, plus a small second depositor for haircut headroom (see
-        // BaseHubTest._setupPath3's rationale — the same structural reason applies here)
+        // BaseHubTest._setupPath3's rationale: the same structural reason applies here)
         address bob = makeAddr("bob");
         usdc.mint(bob, 500e6);
         vm.startPrank(bob);
@@ -115,7 +115,7 @@ contract WI4_WithdrawalEngineIntegrationTest is Test {
         uint256 aliceBalanceBefore = usdc.balanceOf(alice);
 
         vm.prank(alice);
-        hub.redeem(aliceShares, alice, alice); // Path 3 — idle (1_000e6) insufficient
+        hub.redeem(aliceShares, alice, alice); // Path 3, idle (1_000e6) insufficient
 
         uint256 received = usdc.balanceOf(alice) - aliceBalanceBefore;
         assertEq(received, quotedAssets, "no yield/loss -> payout matches quote exactly");
@@ -124,10 +124,10 @@ contract WI4_WithdrawalEngineIntegrationTest is Test {
     }
 
     /// @notice cancelWithdrawal after WITHDRAWAL_TIMEOUT returns shares; a leg that lands
-    /// AFTER cancellation is a harmless orphan — funds simply become idle.
+    /// after cancellation is a harmless orphan, and the funds become idle.
     function test_wi4_cancelWithdrawal_thenLateLegArrivalIsHarmless() public {
         // register a second, non-responding spoke so the withdrawal never settles on its
-        // own (idle-covered Path 2 branch — deliberately never becomes fresh, forcing the
+        // own (idle-covered Path 2 branch: deliberately never becomes fresh, forcing the
         // entry to stay pending until we explicitly cancel it)
         uint64 deadSelector = 4242;
         address deadSpoke = makeAddr("deadSpoke");
@@ -141,7 +141,7 @@ contract WI4_WithdrawalEngineIntegrationTest is Test {
         uint256 assets = hub.previewRedeem(aliceShares);
 
         vm.prank(alice);
-        hub.withdraw(assets, alice, alice); // Path 2 — idle covers, deadSelector never reports
+        hub.withdraw(assets, alice, alice); // Path 2: idle covers, deadSelector never reports
 
         assertGt(hub.reservedAssets(), 0, "withdrawal pending");
 
@@ -154,7 +154,7 @@ contract WI4_WithdrawalEngineIntegrationTest is Test {
         assertEq(hub.balanceOf(alice), aliceShares, "shares returned");
         assertEq(hub.reservedAssets(), 0, "reservation released");
 
-        // the real spoke was never part of this withdrawal's legs (Path 2, no legs) — but
+        // the real spoke was never part of this withdrawal's legs (Path 2, no legs), but
         // this establishes cancellation is clean and total assets are unaffected.
         assertEq(hub.totalAssets(), 10_000e6, "totalAssets unaffected by cancel");
     }

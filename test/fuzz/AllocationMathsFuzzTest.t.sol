@@ -30,12 +30,12 @@ contract AllocationMathsFuzzTest is Test {
         uint256 gross,
         uint256 costs
     ) public pure {
-        // skip inputs where costs exceed gross — would underflow
+        // skip inputs where costs exceed gross: would underflow
         vm.assume(costs <= gross);
 
         uint256 result = AllocationMaths.netApy(gross, costs);
 
-        // result + costs must always equal gross — no value created or lost
+        // result + costs must always equal gross, no value created or lost
         assertEq(result + costs, gross);
     }
 
@@ -48,19 +48,19 @@ contract AllocationMathsFuzzTest is Test {
     }
 
     function testFuzz_netApy_zeroCostsReturnsGross(uint256 gross) public pure {
-        // zero costs — net always equals gross
+        // zero costs: net always equals gross
         assertEq(AllocationMaths.netApy(gross, 0), gross);
     }
 
     function testFuzz_netApy_fullCostsReturnsZero(uint256 gross) public pure {
-        // costs equal gross — net always zero
+        // costs equal gross: net always zero
         assertEq(AllocationMaths.netApy(gross, gross), 0);
     }
 
     // =========================================================================
     // weightedApy fuzz tests
     // Property: result always between min and max apy in array
-    // Property: if all apys equal X — result equals X
+    // Property: if all apys equal X, result equals X
     // Property: result scales linearly with allocations
     // =========================================================================
 
@@ -95,7 +95,7 @@ contract AllocationMathsFuzzTest is Test {
         uint256 alloc1,
         uint256 uniformApy
     ) public pure {
-        // if all markets have same apy — weighted result equals that apy
+        // if all markets have same apy: weighted result equals that apy
         vm.assume(alloc1 <= 10_000);
         vm.assume(uniformApy <= 10_000);
         uint256 alloc2 = 10_000 - alloc1;
@@ -120,7 +120,7 @@ contract AllocationMathsFuzzTest is Test {
         uint256[] memory allocations = new uint256[](2);
         uint256[] memory apys = new uint256[](2);
         allocations[0] = 10_000; // full allocation
-        allocations[1] = 0; // zero — ignored
+        allocations[1] = 0; // zero, ignored
         apys[0] = apy1;
         apys[1] = apy2;
 
@@ -153,7 +153,7 @@ contract AllocationMathsFuzzTest is Test {
         uint256 current,
         uint256 optimal
     ) public pure {
-        // optimal worse than or equal to current — never rebalance
+        // optimal worse than or equal to current: never rebalance
         vm.assume(optimal <= current);
         assertFalse(AllocationMaths.shouldRebalance(current, optimal));
     }
@@ -162,7 +162,7 @@ contract AllocationMathsFuzzTest is Test {
         uint256 current,
         uint256 gain
     ) public pure {
-        // gain >= 50 bps — always rebalance
+        // gain >= 50 bps: always rebalance
         vm.assume(gain >= 50);
         vm.assume(current <= type(uint256).max - gain); // prevent overflow
         uint256 optimal = current + gain;
@@ -173,7 +173,7 @@ contract AllocationMathsFuzzTest is Test {
         uint256 current,
         uint256 gain
     ) public pure {
-        // gain < 50 bps — never rebalance
+        // gain < 50 bps: never rebalance
         vm.assume(gain < 50);
         vm.assume(current <= type(uint256).max - gain);
         uint256 optimal = current + gain;
@@ -252,7 +252,7 @@ contract AllocationMathsFuzzTest is Test {
         // use two chains so the rest can be distributed without violating per-market cap
         vm.assume(dust >= 1 && dust <= 499);
         uint256 rest = 10_000 - dust;
-        // split rest across two chains — each gets half
+        // split rest across two chains, each gets half
         uint256 chain2 = rest / 2;
         uint256 chain1Rest = rest - chain2;
         // ensure each part is within valid per-market bounds
@@ -262,7 +262,7 @@ contract AllocationMathsFuzzTest is Test {
         uint256[][] memory allocations = new uint256[][](2);
         allocations[0] = new uint256[](2);
         allocations[1] = new uint256[](1);
-        allocations[0][0] = dust;       // dust allocation — should fail
+        allocations[0][0] = dust;       // dust allocation: should fail
         allocations[0][1] = chain1Rest;
         allocations[1][0] = chain2;
 

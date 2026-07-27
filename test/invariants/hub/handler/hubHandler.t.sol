@@ -36,10 +36,10 @@ contract HubVaultHandler is Test {
     uint256 public ghostTotalSentToSpokes;
     uint256 public ghostTotalRecalledFromSpokes;
 
-    /// @dev WI-4 — every withdrawal id that has ever been queued (Path 2 or Path 3). The
+    /// @dev WI-4: every withdrawal id that has ever been queued (Path 2 or Path 3). The
     /// hub exposes no enumeration of pendingWithdrawals, so the handler must capture ids
     /// itself from the WithdrawalQueued event as they're issued. Entries whose
-    /// pendingWithdrawals[id].shares has since gone to 0 are settled/cancelled — the
+    /// pendingWithdrawals[id].shares has since gone to 0 are settled/cancelled. The
     /// invariants filter on that, not on removing entries from this array.
     bytes32[] public ghostPendingWithdrawalIds;
     bytes32 constant WITHDRAWAL_QUEUED_SIG =
@@ -113,7 +113,7 @@ contract HubVaultHandler is Test {
 
         // Repointing an ALREADY-registered selector to a codeless address is a realistic
         // owner misconfiguration, but it silently blackholes any in-flight or future
-        // message to that selector (no contract there to ever send a confirm back) —
+        // message to that selector (no contract there to ever send a confirm back),
         // permanently desyncing inTransitAssets in a way no amount of correct hub-side
         // accounting can prevent. That failure mode belongs to addSpoke's own operational
         // safety (out of scope for the WI-4 invariants this handler feeds), so skip it here
@@ -142,8 +142,8 @@ contract HubVaultHandler is Test {
         if (!exists) return;
 
         // WI-6 added an on-chain guard (spokeBalances[selector] == 0 and no in-flight legs)
-        // — wrapped in try/catch so the fuzzer also exercises the revert path for a funded
-        // or in-flight spoke, not just the success path.
+        // Wrapped in try/catch so the fuzzer also exercises the revert path for a funded
+        // or in-flight spoke rather than only the success path.
         vm.prank(owner);
         try hub.removeSpoke(selector) {
             ghostCurrentSpoke[selector] = address(0);
@@ -174,7 +174,7 @@ contract HubVaultHandler is Test {
     }
 
     function recallFromSpoke(uint256 amount) public {
-        // only recall if spoke has a non-dust balance — bound(1e6, spokeBalance) panics
+        // only recall if spoke has a non-dust balance, bound(1e6, spokeBalance) panics
         // (max < min) once repeated partial recalls leave sub-1e6 dust behind, which is a
         // reachable state regardless of WI-1/WI-2 (spokeBalance decreases by exact recalled
         // amounts, and can land below 1e6 after several cycles).
@@ -207,10 +207,10 @@ contract HubVaultHandler is Test {
         } catch {}
     }
 
-    /// @notice WI-4 — a random depositor redeems a random fraction of their shares
+    /// @notice WI-4: a random depositor redeems a random fraction of their shares
     /// @dev May settle synchronously (Path 1/2 in this synchronous harness) or, if the
     ///      spoke's reported balance can't cover the haircut-capped shortfall, revert with
-    ///      InsufficientRecallLiquidity — wrapped in try/catch since that is expected,
+    ///      InsufficientRecallLiquidity: wrapped in try/catch since that is expected,
     ///      fail-closed behavior, not a bug. Captures the issued withdrawal id (if any) from
     ///      the WithdrawalQueued event so the invariants below can sum over real entries.
     function redeemShares(uint256 actorSeed, uint256 fractionBps) public {
@@ -231,7 +231,7 @@ contract HubVaultHandler is Test {
         } catch {}
     }
 
-    /// @notice WI-4 — settle/cancel maintenance calls so pending entries don't only ever grow
+    /// @notice WI-4: settle/cancel maintenance calls so pending entries don't only ever grow
     function attemptSettlement(uint256 idSeed) public {
         if (ghostPendingWithdrawalIds.length == 0) return;
         bytes32 id = ghostPendingWithdrawalIds[

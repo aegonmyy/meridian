@@ -6,7 +6,7 @@ import {SpokeNotDrained, SpokeHasInFlightLegs, SpokeNotFound} from "../../src/er
 import {HUB} from "../../src/Hub.sol";
 import {PendingConfirmsOutstanding, ZeroAddress} from "../../src/errors/spokeErrors.sol";
 
-/// @notice WI-6 regressions — removeSpoke/forceRemoveSpoke guards and setHub guard.
+/// @notice WI-6 regressions, removeSpoke/forceRemoveSpoke guards and setHub guard.
 contract WI6_OperationalHardeningTest is BaseHubTest {
     /// @notice Pre-fix: removeSpoke on a funded spoke instantly craters totalManagedAssets()
     /// by that spoke's reported balance. Post-fix: reverts with SpokeNotDrained.
@@ -17,7 +17,7 @@ contract WI6_OperationalHardeningTest is BaseHubTest {
         vm.expectRevert(SpokeNotDrained.selector);
         hub.removeSpoke(chainSelector);
 
-        // totalAssets must be unaffected — the guard blocked the removal before any state changed
+        // totalAssets must be unaffected: the guard blocked the removal before any state changed
         assertEq(hub.totalAssets(), 10_000e6);
     }
 
@@ -36,7 +36,7 @@ contract WI6_OperationalHardeningTest is BaseHubTest {
         assertFalse(exists);
     }
 
-    /// @notice forceRemoveSpoke bypasses the guard entirely — the emergency escape hatch.
+    /// @notice forceRemoveSpoke bypasses the guard entirely: the emergency escape hatch.
     function test_wi6_forceRemoveSpoke_bypassesGuard() public {
         _sendToSpoke(3_000e6);
 
@@ -47,7 +47,7 @@ contract WI6_OperationalHardeningTest is BaseHubTest {
 
         (, bool exists, ) = hub.spokes(chainSelector);
         assertFalse(exists);
-        // the funded balance is now excluded from totalManagedAssets() — the documented
+        // the funded balance is now excluded from totalManagedAssets(). The documented
         // instant mispricing this function accepts as the cost of the emergency path
         assertLt(hub.totalAssets(), totalBefore);
     }
@@ -60,10 +60,10 @@ contract WI6_OperationalHardeningTest is BaseHubTest {
 
     /// @notice setHub reverts while the spoke has an unresolved queued confirm (WI-2d).
     /// @dev The local CCIPLocalSimulator's MockCCIPRouter ignores LINK fees entirely
-    ///      (getFee always returns the mock's configurable, default-zero fee — see
+    ///      (getFee always returns the mock's configurable, default-zero fee, see
     ///      lib/chainlink-local's MockRouter.sol), so LINK exhaustion cannot be forced
     ///      through this harness to genuinely exercise _queueConfirm's failure path end to
-    ///      end. Instead, a PendingConfirm entry is injected directly via storage — a
+    ///      end. Instead, a PendingConfirm entry is injected directly via storage. A
     ///      narrow, deterministic way to test setHub's guard LOGIC (which only reads
     ///      pendingConfirms[i].resolved) independent of how that entry came to exist.
     function test_wi6_setHub_revert_pendingConfirmsOutstanding() public {
@@ -92,8 +92,8 @@ contract WI6_OperationalHardeningTest is BaseHubTest {
     }
 
     /// @notice setHub succeeds once a previously-queued confirm is marked resolved (as
-    /// retryConfirm does on success) — proves the guard checks live state, not just "was
-    /// ever queued".
+    /// retryConfirm does on success): proves the guard checks live state rather than
+    /// whether an entry was ever queued.
     function test_wi6_setHub_succeeds_onceResolved() public {
         bytes32 id = keccak256("stuck-confirm-2");
         _injectPendingConfirm(id);
@@ -112,7 +112,7 @@ contract WI6_OperationalHardeningTest is BaseHubTest {
     // whenever Spoke.sol's state variable declarations change.
     // pendingConfirms is a dynamic array at slot 4. Each PendingConfirm element occupies 4
     // slots: messageType, messageId, actualAmount, resolved. unresolvedConfirmCount (FX-6a)
-    // is a plain uint256 at slot 5 — setHub's guard reads this counter directly (no longer a
+    // is a plain uint256 at slot 5, setHub's guard reads this counter directly (no longer a
     // linear scan of pendingConfirms), so injecting an entry must also bump it or the guard
     // won't trip.
     function _injectPendingConfirm(bytes32 messageId) internal {

@@ -78,7 +78,7 @@ contract HandleRebalanceTest is Test {
         ccipSimulator.requestLinkFromFaucet(address(hub), 10 ether);
         ccipSimulator.requestLinkFromFaucet(address(spoke), 10 ether);
 
-        // alice deposits — hub gets USDC
+        // alice deposits, hub gets USDC
         usdc.mint(alice, 10_000e6);
         vm.startPrank(alice);
         usdc.approve(address(hub), 10_000e6);
@@ -135,7 +135,7 @@ contract HandleRebalanceTest is Test {
     // =========================================================================
 
     function test_handleRebalance_sourceAdapterDecreases() public {
-        // aave has 5_000 — move 2_000 to compound
+        // aave has 5_000, move 2_000 to compound
         _rebalance(AAVE, COMPOUND, 2_000e6);
         assertEq(aaveAdapter.totalAssets(), 3_000e6);
     }
@@ -175,7 +175,7 @@ contract HandleRebalanceTest is Test {
     }
 
     function test_handleRebalance_noTokensReturnToHub() public {
-        // REBALANCE is intra-spoke — hub USDC balance unchanged
+        // REBALANCE is intra-spoke, hub USDC balance unchanged
         uint256 hubBalanceBefore = usdc.balanceOf(address(hub));
         _rebalance(AAVE, COMPOUND, 2_000e6);
         assertEq(usdc.balanceOf(address(hub)), hubBalanceBefore);
@@ -250,7 +250,7 @@ contract HandleRebalanceTest is Test {
         });
 
         vm.prank(rebalancer);
-        // must not revert — the instruction is skipped and CONFIRM_REBALANCE still lands
+        // must not revert: the instruction is skipped and CONFIRM_REBALANCE still lands
         hub.rebalance(chainSelector, instructions);
 
         assertGt(hub.lastReportTimestamp(chainSelector), 0);
@@ -265,7 +265,7 @@ contract HandleRebalanceTest is Test {
         hub.rebalance(chainSelector, instructions);
     }
 
-    /// @dev WI-2c changed this from a hard revert to a skip+event — see
+    /// @dev WI-2c changed this from a hard revert to a skip+event, see
     /// docs/revert-audit.md #10.
     function test_handleRebalance_zeroAmountInstruction_skipsWithoutReverting() public {
         CCIPHelpers.AdapterInstructions[]
@@ -278,7 +278,7 @@ contract HandleRebalanceTest is Test {
         });
 
         vm.prank(rebalancer);
-        // must not revert — the zero-amount instruction is skipped
+        // must not revert: the zero-amount instruction is skipped
         hub.rebalance(chainSelector, instructions);
 
         assertGt(hub.lastReportTimestamp(chainSelector), 0);

@@ -193,7 +193,7 @@ contract WI3_RebalancerRecallTest is Test {
         rebalancer.proposeAllocation(proposal);
     }
 
-    /// @notice Pre-fix: sendToSpoke has no idea reservedAssets exists — a rebalancer can
+    /// @notice Pre-fix: sendToSpoke has no idea reservedAssets exists. A rebalancer can
     /// ship idle a pending withdrawal is relying on to settle. This directly demonstrates
     /// the missing guard by simulating a large reservation (as if a pending withdrawal
     /// exists) via storage, then attempting to ship idle beyond what's actually unreserved.
@@ -211,7 +211,7 @@ contract WI3_RebalancerRecallTest is Test {
         });
 
         vm.prank(address(rebalancer));
-        // must revert post-fix — pre-fix this succeeds and ships reserved idle
+        // must revert post-fix: pre-fix this succeeds and ships reserved idle
         vm.expectRevert(
             abi.encodeWithSelector(
                 InsufficientUnreservedIdle.selector,
@@ -231,7 +231,7 @@ contract WI3_RebalancerRecallTest is Test {
     /// @dev Two chains so the proposal obeys AllocationMaths' per-chain 8000bps cap while
     ///      still summing to a full 10000bps grand total: chain1 = 8000bps (6000 aave +
     ///      2000 compound), chain2 = 2000bps (aave only). Chain2's selector only needs to
-    ///      be whitelisted in Rebalancer — it need not be a real registered hub spoke,
+    ///      be whitelisted in Rebalancer: it need not be a real registered hub spoke,
     ///      since the WI-3 pre-check reverts before any per-chain dispatch is attempted.
     function _buildValidProposal()
         internal

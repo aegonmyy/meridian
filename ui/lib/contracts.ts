@@ -115,7 +115,7 @@ export const HUB_ABI = [
     inputs: [{ name: "_gasLimit", type: "uint32" }],
     outputs: [],
   },
-  // adjustInTransitAssets: emergency correction when CCIP messages fail — zeroes or
+  // adjustInTransitAssets: emergency correction when CCIP messages fail, zeroes or
   // reduces inTransitAssets so share prices are not inflated by stuck transit amounts.
   {
     name: "adjustInTransitAssets",
@@ -239,7 +239,7 @@ export const HUB_ABI = [
       { name: "messageId", type: "bytes32",  indexed: false },
     ],
   },
-  // SpokeAdded: addSpoke() succeeds — admin registered or updated a spoke
+  // SpokeAdded: addSpoke() succeeds, admin registered or updated a spoke
   {
     name: "SpokeAdded",
     type: "event",
@@ -248,7 +248,7 @@ export const HUB_ABI = [
       { name: "spokeAddress",  type: "address", indexed: true },
     ],
   },
-  // SpokeRemoved: removeSpoke() succeeds — admin disabled a spoke
+  // SpokeRemoved: removeSpoke() succeeds, admin disabled a spoke
   {
     name: "SpokeRemoved",
     type: "event",
@@ -266,7 +266,7 @@ export const HUB_ABI = [
       { name: "balance",       type: "uint256", indexed: false },
     ],
   },
-  // SentToSpoke: emitted on every hub→spoke CCIP send — track ccipMessageId on ccip.chain.link
+  // SentToSpoke: emitted on every hub→spoke CCIP send. Track ccipMessageId on ccip.chain.link
   {
     name: "SentToSpoke",
     type: "event",
@@ -289,11 +289,11 @@ export const HUB_ABI = [
   { name: "SpokeNotFound",          type: "error", inputs: [] },
   // SpokeAlreadyRegistered: addSpoke with address already on a different selector
   { name: "SpokeAlreadyRegistered", type: "error", inputs: [] },
-  // NotSpoke: CCIP message from unregistered address — not user-triggerable
+  // NotSpoke: CCIP message from unregistered address, not user-triggerable
   { name: "NotSpoke",               type: "error", inputs: [] },
-  // InvalidMessageType: unknown CCIP message type — not user-triggerable
+  // InvalidMessageType: unknown CCIP message type, not user-triggerable
   { name: "InvalidMessageType",     type: "error", inputs: [] },
-  // InvalidConstructorArguments: constructor zero-address — not user-triggerable
+  // InvalidConstructorArguments: constructor zero-address, not user-triggerable
   { name: "InvalidConstructorArguments", type: "error", inputs: [] },
 ] as const;
 
@@ -346,7 +346,7 @@ export const REBALANCER_ABI = [
   { name: "whitelistedProtocols",    type: "function", stateMutability: "view", inputs: [{ name: "_protocolId", type: "bytes32" }], outputs: [{ name: "", type: "bool" }] },
 
   // ── Core operations (onlyAuthorized: owner or AgentConsumer) ──────────────
-  // rebalance — intra-spoke capital move between adapters on one chain
+  // rebalance: intra-spoke capital move between adapters on one chain
   // Errors: SourceEqualsTarget, ZeroAmount, ChainNotWhitelisted, ProtocolNotWhitelisted
   {
     name: "rebalance",
@@ -368,7 +368,7 @@ export const REBALANCER_ABI = [
   { name: "removeProtocolFromWhitelist",type: "function", stateMutability: "nonpayable", inputs: [{ name: "_protocolId",    type: "bytes32" }], outputs: [] },
 
   // ── Events ────────────────────────────────────────────────────────────────
-  // RebalanceExecuted — emitted after successful rebalance() or proposeAllocation()
+  // RebalanceExecuted: emitted after successful rebalance() or proposeAllocation()
   // weightedApy is 0 for rebalance(), non-zero for proposeAllocation()
   {
     name: "RebalanceExecuted",
@@ -378,43 +378,43 @@ export const REBALANCER_ABI = [
       { name: "weightedApy", type: "uint256", indexed: false },
     ],
   },
-  // ChainWhitelisted / ChainRemovedFromWhitelist — addChainToWhitelist / removeChainFromWhitelist
+  // ChainWhitelisted / ChainRemovedFromWhitelist: addChainToWhitelist / removeChainFromWhitelist
   { name: "ChainWhitelisted",          type: "event", inputs: [{ name: "chainSelector", type: "uint64",  indexed: false }] },
   { name: "ChainRemovedFromWhitelist", type: "event", inputs: [{ name: "chainSelector", type: "uint64",  indexed: false }] },
-  // ProtocolWhitelisted / ProtocolRemovedFromWhitelist — addProtocolToWhitelist / removeProtocolFromWhitelist
+  // ProtocolWhitelisted / ProtocolRemovedFromWhitelist: addProtocolToWhitelist / removeProtocolFromWhitelist
   { name: "ProtocolWhitelisted",           type: "event", inputs: [{ name: "protocolId", type: "bytes32", indexed: false }] },
   { name: "ProtocolRemovedFromWhitelist",  type: "event", inputs: [{ name: "protocolId", type: "bytes32", indexed: false }] },
 
   // ── Custom errors ─────────────────────────────────────────────────────────
-  // InvalidConstructorArguments — constructor, not user-triggerable
+  // InvalidConstructorArguments: constructor, not user-triggerable
   { name: "InvalidConstructorArguments", type: "error", inputs: [] },
-  // NotAuthorized — caller is not owner or AgentConsumer
+  // NotAuthorized: caller is not owner or AgentConsumer
   { name: "NotAuthorized",              type: "error", inputs: [] },
-  // SourceEqualsTarget — rebalance() with _source == _target
+  // SourceEqualsTarget: rebalance() with _source == _target
   { name: "SourceEqualsTarget",         type: "error", inputs: [] },
-  // ZeroAmount — rebalance() with _amount == 0
+  // ZeroAmount: rebalance() with _amount == 0
   { name: "ZeroAmount",                 type: "error", inputs: [] },
-  // BelowThreshold — proposeAllocation() optimal APY doesn't beat current by >= 50 bps
+  // BelowThreshold: proposeAllocation() optimal APY doesn't beat current by >= 50 bps
   { name: "BelowThreshold",             type: "error", inputs: [] },
-  // MaxSingleMoveExceeded — any allocation > 30% of totalAssets
+  // MaxSingleMoveExceeded: any allocation > 30% of totalAssets
   { name: "MaxSingleMoveExceeded",      type: "error", inputs: [] },
-  // ChainNotWhitelisted — chain not in whitelistedChains mapping
+  // ChainNotWhitelisted: chain not in whitelistedChains mapping
   { name: "ChainNotWhitelisted",        type: "error", inputs: [] },
-  // ProtocolNotWhitelisted — protocol not in whitelistedProtocols mapping
+  // ProtocolNotWhitelisted: protocol not in whitelistedProtocols mapping
   { name: "ProtocolNotWhitelisted",     type: "error", inputs: [] },
-  // InvalidAllocation — validateAllocation() failed: sum≠10000, market>6000, chain>8000, dust<500
+  // InvalidAllocation: validateAllocation() failed: sum≠10000, market>6000, chain>8000, dust<500
   { name: "InvalidAllocation",          type: "error", inputs: [] },
 ] as const;
 
 /* ── AgentConsumer ABI ───────────────────────────────────────────────────── */
-// Thin access-control wrapper — off-chain agent calls proposeAllocation() which
+// Thin access-control wrapper: the off-chain agent calls proposeAllocation(), which
 // immediately forwards to Rebalancer. No on-chain approval queue.
 export const AGENT_CONSUMER_ABI = [
   // View: immutable references
   { name: "REBALANCER", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
   { name: "AGENT",      type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
 
-  // AllocationProposed — emitted after proposeAllocation() forwards to Rebalancer successfully
+  // AllocationProposed: emitted after proposeAllocation() forwards to Rebalancer successfully
   // Indexed: caller (AGENT or owner). Shows when and who submitted a proposal.
   {
     name: "AllocationProposed",
@@ -425,7 +425,7 @@ export const AGENT_CONSUMER_ABI = [
     ],
   },
 
-  // NotAgent — caller is neither AGENT nor owner (not user-triggerable from normal UI)
+  // NotAgent: caller is neither AGENT nor owner (not user-triggerable from normal UI)
   { name: "NotAgent",                    type: "error", inputs: [] },
   { name: "InvalidConstructorArguments", type: "error", inputs: [] },
 ] as const;
@@ -434,7 +434,7 @@ export const AGENT_CONSUMER_ABI = [
 export const SPOKE_ABI = [
   // ── Admin functions (onlyOwner) ─────────────────────────────────────────
   // setAdapter: ZeroAddress() if _adapter == address(0)
-  //             AdapterNotFound() NOT thrown here — creates new if first time
+  //             AdapterNotFound() is not thrown here: creates new if first time
   {
     name: "setAdapter",
     type: "function",
@@ -455,7 +455,7 @@ export const SPOKE_ABI = [
   },
 
   // ── View functions ───────────────────────────────────────────────────────
-  // getAllocations: per-adapter balance snapshot — used by allocations page
+  // getAllocations: per-adapter balance snapshot, used by the allocations page
   {
     name: "getAllocations",
     type: "function",
@@ -494,7 +494,7 @@ export const SPOKE_ABI = [
   { name: "HUB",               type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
   { name: "HUB_CHAIN_SELECTOR",type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint64" }] },
 
-  // setHub: update Hub address when Hub is redeployed — onlyOwner
+  // setHub: update Hub address when Hub is redeployed, onlyOwner
   {
     name: "setHub",
     type: "function",
@@ -504,8 +504,8 @@ export const SPOKE_ABI = [
   },
 
   // ── Events ───────────────────────────────────────────────────────────────
-  // AdapterSet: setAdapter() success — new adapter registered or address updated
-  // Triggered by: setAdapter(protocolId, adapterAddress) — onlyOwner
+  // AdapterSet: setAdapter() success, new adapter registered or address updated
+  // Triggered by: setAdapter(protocolId, adapterAddress), onlyOwner
   {
     name: "AdapterSet",
     type: "event",
@@ -514,8 +514,8 @@ export const SPOKE_ABI = [
       { name: "adapter",    type: "address",  indexed: true },
     ],
   },
-  // AdapterRemoved: removeAdapter() success — adapter disabled (funds NOT recalled)
-  // Triggered by: removeAdapter(protocolId) — onlyOwner
+  // AdapterRemoved: removeAdapter() success, adapter disabled (funds not recalled)
+  // Triggered by: removeAdapter(protocolId), onlyOwner
   {
     name: "AdapterRemoved",
     type: "event",
@@ -523,7 +523,7 @@ export const SPOKE_ABI = [
       { name: "protocolId", type: "bytes32", indexed: true },
     ],
   },
-  // HubUpdated: setHub() success — Hub address updated
+  // HubUpdated: setHub() success. Hub address updated
   {
     name: "HubUpdated",
     type: "event",
@@ -537,15 +537,15 @@ export const SPOKE_ABI = [
   // ZeroAddress: setAdapter(id, address(0))
   { name: "ZeroAddress",                type: "error", inputs: [] },
   // AdapterNotFound: removeAdapter with inactive/unregistered protocolId
-  //                  also: CCIP handlers when adapter missing — not user-triggered
+  //                  also: CCIP handlers when adapter missing, not user-triggered
   { name: "AdapterNotFound",            type: "error", inputs: [] },
-  // NotHub: CCIP message from non-hub — not user-triggerable
+  // NotHub: CCIP message from non-hub, not user-triggerable
   { name: "NotHub",                     type: "error", inputs: [] },
-  // InvalidMessageType: CCIP with unknown type or empty instructions — not user-triggerable
+  // InvalidMessageType: CCIP with unknown type or empty instructions, not user-triggerable
   { name: "InvalidMessageType",         type: "error", inputs: [] },
-  // AmountCannotBeZero: CCIP instruction with amount == 0 — not user-triggerable
+  // AmountCannotBeZero: CCIP instruction with amount == 0, not user-triggerable
   { name: "AmountCannotBeZero",         type: "error", inputs: [] },
-  // InvalidConstructorArguments: constructor — not user-triggerable
+  // InvalidConstructorArguments: constructor, not user-triggerable
   { name: "InvalidConstructorArguments",type: "error", inputs: [] },
 ] as const;
 

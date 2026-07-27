@@ -4,7 +4,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Meridian — Cross-Chain Yield",
+  title: "Meridian: Cross-Chain Yield",
   description: "Automated cross-chain yield optimization powered by Chainlink CCIP",
 };
 

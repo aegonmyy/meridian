@@ -219,7 +219,7 @@ export default function OperatorPage() {
     chainId: sepolia.id,
   });
 
-  // AGENT — the off-chain cron job EOA that submits proposals
+  // AGENT: the off-chain cron job EOA that submits proposals
   const { data: agentEOA } = useReadContract({
     address: CONTRACTS.agentConsumer.address,
     abi: AGENT_CONSUMER_ABI,
@@ -227,7 +227,7 @@ export default function OperatorPage() {
     chainId: sepolia.id,
   });
 
-  // Whitelist status — chains
+  // Whitelist status: chains
   const { data: wlArbChain, refetch: refetchWlArbChain } = useReadContract({
     address: CONTRACTS.rebalancer.address,
     abi: REBALANCER_ABI,
@@ -245,7 +245,7 @@ export default function OperatorPage() {
     query: { refetchInterval: 60_000 },
   });
 
-  // Whitelist status — protocols
+  // Whitelist status: protocols
   const { data: wlAave, refetch: refetchWlAave } = useReadContract({
     address: CONTRACTS.rebalancer.address,
     abi: REBALANCER_ABI,
@@ -279,7 +279,7 @@ export default function OperatorPage() {
     chainId: sepolia.id,
   });
 
-  // Hub accounting — inTransitAssets and configurable gas limit
+  // Hub accounting: inTransitAssets and configurable gas limit
   const { data: inTransitAssets, refetch: refetchInTransit } = useReadContract({
     address: CONTRACTS.hub.address,
     abi: HUB_ABI,
@@ -342,7 +342,7 @@ export default function OperatorPage() {
     query: { enabled: !!setAdapterProtocol },
   });
 
-  // setAdapter(bytes32 _protocolId, address _adapter) — onlyOwner on SpokeVault (Arb Sepolia)
+  // setAdapter(bytes32 _protocolId, address _adapter), onlyOwner on SpokeVault (Arb Sepolia)
   // Errors: ZeroAddress if _adapter == address(0)
   function handleSetAdapter() {
     if (!setAdapterProtocol || !setAdapterAddress) return;
@@ -361,9 +361,9 @@ export default function OperatorPage() {
     );
   }
 
-  // removeAdapter(bytes32 _protocolId) — onlyOwner on SpokeVault (Arb Sepolia)
+  // removeAdapter(bytes32 _protocolId), onlyOwner on SpokeVault (Arb Sepolia)
   // Errors: AdapterNotFound if protocolId not currently active
-  // NOTE: capital in this adapter is NOT recalled — emit warning in UI
+  // Capital in this adapter is not recalled. Emit a warning in the UI
   function handleRemoveAdapter() {
     if (!removeAdapterProtocol) return;
     removeAdapterFn(
@@ -432,7 +432,7 @@ export default function OperatorPage() {
     );
   }
 
-  // rebalance(source, target, amount, chainSelector) — Rebalancer, onlyAuthorized
+  // rebalance(source, target, amount, chainSelector). Rebalancer, onlyAuthorized
   // Errors: CooldownNotElapsed, SourceEqualsTarget, ZeroAmount, ChainNotWhitelisted, ProtocolNotWhitelisted
   function handleRebalance() {
     if (!rebalSource || !rebalTarget || !rebalAmount || !rebalChain) return;
@@ -579,7 +579,7 @@ export default function OperatorPage() {
         {/* ── CCIP Transfer Status ─────────────────────────────────────── */}
         {/* Polls the CCIP Explorer API for all messages sent from the Hub.
             State 0=Untouched, 1=In Progress, 2=Success, 3=Failure.
-            FAILURE means the spoke received the message but execution reverted —
+            FAILURE means the spoke received the message but execution reverted,
             tokens sit in the OffRamp until manually executed or abandoned. */}
         <Card>
           <CardHeader>
@@ -601,7 +601,7 @@ export default function OperatorPage() {
 
           {ccipError && (
             <div className="rounded-xl px-3 py-2.5 text-xs mb-3" style={{ background: "#fef3c7", color: "#92400e" }}>
-              CCIP Explorer unavailable: {ccipError} —{" "}
+              CCIP Explorer unavailable: {ccipError}.{" "}
               <a
                 href={`https://ccip.chain.link/address/${CONTRACTS.hub.address}`}
                 target="_blank"
@@ -796,9 +796,9 @@ export default function OperatorPage() {
           </div>
         </Card>
 
-        {/* Agent proposal log — last AllocationProposed event from AgentConsumer */}
+        {/* Agent proposal log: last AllocationProposed event from AgentConsumer */}
         {/* The agent (off-chain cron EOA) calls AgentConsumer.proposeAllocation() which
-            immediately forwards to Rebalancer — there is no on-chain approval queue.
+            immediately forwards to Rebalancer. There is no on-chain approval queue.
             AllocationProposed is emitted only after the Rebalancer fully accepts the proposal. */}
         <Card>
           <CardHeader>
@@ -839,7 +839,7 @@ export default function OperatorPage() {
             <div className="flex flex-col gap-2">
               <p className="text-xs" style={{ color: "var(--color-muted)" }}>
                 No allocation proposal seen this session. The off-chain agent submits proposals
-                automatically on its schedule — they execute immediately if all Rebalancer guards pass.
+                automatically on its schedule, and they execute immediately if all Rebalancer guards pass.
               </p>
               <div className="rounded-xl px-3 py-2.5 text-xs" style={{ background: "var(--color-bg)" }}>
                 <span style={{ color: "var(--color-muted)" }}>Agent EOA: </span>
@@ -933,7 +933,7 @@ export default function OperatorPage() {
         </Card>
 
         {/* ── Admin: addSpoke ──────────────────────────────────────────── */}
-        {/* addSpoke(uint64 _chainSelector, address _spokeAddress) — onlyOwner
+        {/* addSpoke(uint64 _chainSelector, address _spokeAddress), onlyOwner
             Errors: ZeroAddress if spokeAddress is 0x0
                     SpokeAlreadyRegistered if address already on different selector */}
         <Card>
@@ -972,7 +972,7 @@ export default function OperatorPage() {
         </Card>
 
         {/* ── Admin: removeSpoke ───────────────────────────────────────── */}
-        {/* removeSpoke(uint64 _chainSelector) — onlyOwner
+        {/* removeSpoke(uint64 _chainSelector), onlyOwner
             Errors: SpokeNotFound if selector not active */}
         <Card>
           <CardHeader>
@@ -984,7 +984,7 @@ export default function OperatorPage() {
           <div className="flex flex-col gap-4">
             <Field
               label="Chain Selector"
-              hint="Disables this spoke. Capital already deployed is NOT recalled automatically."
+              hint="Disables this spoke. Capital already deployed is not recalled automatically."
             >
               <ChainSelect value={removeSelector} onChange={setRemoveSelector} />
             </Field>
@@ -1002,7 +1002,7 @@ export default function OperatorPage() {
         </Card>
 
         {/* ── Admin: setRebalancer ─────────────────────────────────────── */}
-        {/* setRebalancer(address _rebalancer) — onlyOwner
+        {/* setRebalancer(address _rebalancer), onlyOwner
             Errors: ZeroAddress if _rebalancer == address(0) */}
         <Card>
           <CardHeader>
@@ -1045,14 +1045,14 @@ export default function OperatorPage() {
         </Card>
 
         {/* ═══════════════════════════════════════════════════════════════
-            SPOKE ADMIN — SpokeVault on Arbitrum Sepolia
+            SPOKE ADMIN: SpokeVault on Arbitrum Sepolia
             ═══════════════════════════════════════════════════════════════ */}
 
         {/* ── Spoke: current adapter allocations ──────────────────────── */}
         <Card>
           <CardHeader>
             <CardTitle style={{ color: "var(--color-text)", fontWeight: 600, fontSize: "0.875rem" }}>
-              Arb Spoke — Active Adapters
+              Arb Spoke: Active Adapters
             </CardTitle>
             <Badge variant={arbAllocations && arbAllocations.length > 0 ? "green" : "gray"}>
               Arbitrum Sepolia
@@ -1090,7 +1090,7 @@ export default function OperatorPage() {
         </Card>
 
         {/* ── Spoke: setAdapter ─────────────────────────────────────────── */}
-        {/* setAdapter(bytes32 _protocolId, address _adapter) — onlyOwner on SpokeVault
+        {/* setAdapter(bytes32 _protocolId, address _adapter), onlyOwner on SpokeVault
             Errors: ZeroAddress if _adapter == address(0) */}
         <Card>
           <CardHeader>
@@ -1102,7 +1102,7 @@ export default function OperatorPage() {
           <div className="flex flex-col gap-4">
             <Field
               label="Protocol"
-              hint="keccak256 of the protocol name — must match what the Rebalancer uses."
+              hint="keccak256 of the protocol name. Must match what the Rebalancer uses."
             >
               <ProtocolSelect value={setAdapterProtocol} onChange={setSetAdapterProtocol} />
             </Field>
@@ -1138,9 +1138,9 @@ export default function OperatorPage() {
         </Card>
 
         {/* ── Spoke: removeAdapter ──────────────────────────────────────── */}
-        {/* removeAdapter(bytes32 _protocolId) — onlyOwner on SpokeVault
+        {/* removeAdapter(bytes32 _protocolId), onlyOwner on SpokeVault
             Errors: AdapterNotFound if protocolId not currently active
-            IMPORTANT: capital in this adapter is NOT recalled automatically */}
+            Capital in this adapter is not recalled automatically */}
         <Card>
           <CardHeader>
             <CardTitle style={{ color: "var(--color-text)", fontWeight: 600, fontSize: "0.875rem" }}>
@@ -1155,7 +1155,7 @@ export default function OperatorPage() {
             >
               <p className="font-semibold mb-0.5" style={{ color: "#92400e" }}>Warning</p>
               <p style={{ color: "#92400e" }}>
-                Capital deployed in this adapter is NOT recalled. A WITHDRAW_AMOUNT instruction from Hub
+                Capital deployed in this adapter is not recalled. A WITHDRAW_AMOUNT instruction from Hub
                 must be sent separately to recover funds.
               </p>
             </div>
@@ -1179,7 +1179,7 @@ export default function OperatorPage() {
         </Card>
 
         {/* ═══════════════════════════════════════════════════════════════
-            REBALANCER ADMIN — whitelist management
+            REBALANCER ADMIN: whitelist management
             ═══════════════════════════════════════════════════════════════ */}
 
         {/* ── Add / remove chain whitelist ──────────────────────────────── */}
@@ -1205,7 +1205,7 @@ export default function OperatorPage() {
               </Button>
             </div>
             <div className="flex flex-col gap-3">
-              <Field label="Remove chain" hint="Blocks new capital deployments. Existing funds are NOT recalled.">
+              <Field label="Remove chain" hint="Blocks new capital deployments. Existing funds are not recalled.">
                 <ChainSelect value={wlRemoveChain} onChange={setWlRemoveChain} />
               </Field>
               <Button
@@ -1294,10 +1294,10 @@ export default function OperatorPage() {
 
       </main>
 
-      {/* Error modal — Hub + Spoke custom errors decoded and explained */}
+      {/* Error modal: Hub and Spoke custom errors decoded and explained */}
       <ErrorModal error={hubError} onClose={() => setHubError(null)} />
 
-      {/* Event toasts — SpokeAdded, SpokeRemoved, AdapterSet, AdapterRemoved */}
+      {/* Event toasts: SpokeAdded, SpokeRemoved, AdapterSet, AdapterRemoved */}
       <EventToast toasts={toasts} onDismiss={dismiss} />
     </div>
   );

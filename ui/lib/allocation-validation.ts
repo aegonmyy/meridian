@@ -1,4 +1,4 @@
-// Client-side mirror of AllocationMaths.sol — pre-flight validation before sending tx.
+// Client-side mirror of AllocationMaths.sol: pre-flight validation before sending tx.
 // All constraints match the on-chain library exactly.
 
 export interface AllocationIssue {

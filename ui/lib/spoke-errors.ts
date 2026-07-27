@@ -15,22 +15,22 @@ export const SPOKE_ERROR_MAP: Record<string, HubErrorInfo> = {
   NotHub: {
     title: "Unauthorised sender",
     cause: "A CCIP message arrived from an address other than the registered Hub.",
-    fix: "Internal error — contact the protocol team.",
+    fix: "Internal error. Contact the protocol team.",
   },
   InvalidMessageType: {
     title: "Invalid CCIP message",
     cause: "Spoke received a message with an unrecognised type or empty instructions.",
-    fix: "Internal error — contact the protocol team.",
+    fix: "Internal error. Contact the protocol team.",
   },
   AmountCannotBeZero: {
     title: "Zero amount",
     cause: "A deposit or withdrawal instruction carried a zero amount.",
-    fix: "Internal error — the Rebalancer should never send zero amounts.",
+    fix: "Internal error. The Rebalancer should never send zero amounts.",
   },
   InvalidConstructorArguments: {
     title: "Invalid deployment arguments",
     cause: "A constructor argument was the zero address or zero selector.",
-    fix: "Deployment error — re-deploy with valid arguments.",
+    fix: "Deployment error. Re-deploy with valid arguments.",
   },
 };
 

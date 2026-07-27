@@ -5,7 +5,7 @@ import { arbitrumSepolia } from "wagmi/chains";
 import { CONTRACTS, SPOKE_ABI, PROTOCOL_LABELS } from "@/lib/contracts";
 
 // ── AdapterSet ────────────────────────────────────────────────────────────
-// Triggered: setAdapter(protocolId, adapterAddress) — onlyOwner on SpokeVault (Arb Sepolia)
+// Triggered: setAdapter(protocolId, adapterAddress), onlyOwner on SpokeVault (Arb Sepolia)
 // Indexed: protocolId, adapter
 export function useWatchAdapterSet(
   onSet: (protocolId: `0x${string}`, adapter: `0x${string}`) => void
@@ -28,9 +28,9 @@ export function useWatchAdapterSet(
 }
 
 // ── AdapterRemoved ────────────────────────────────────────────────────────
-// Triggered: removeAdapter(protocolId) — onlyOwner on SpokeVault (Arb Sepolia)
+// Triggered: removeAdapter(protocolId), onlyOwner on SpokeVault (Arb Sepolia)
 // Indexed: protocolId
-// NOTE: capital already deployed to this adapter is NOT recalled automatically.
+// Capital already deployed to this adapter is not recalled automatically.
 // A WITHDRAW_AMOUNT instruction from Hub is needed to reclaim funds.
 export function useWatchAdapterRemoved(
   onRemoved: (protocolId: `0x${string}`) => void
@@ -68,7 +68,7 @@ export function useSpokeAdapterEvents(
     push({
       variant: "warning",
       title: "Adapter disabled",
-      body: `${label} was removed. Deployed funds NOT recalled automatically.`,
+      body: `${label} was removed. Deployed funds are not recalled automatically.`,
     });
   });
 }

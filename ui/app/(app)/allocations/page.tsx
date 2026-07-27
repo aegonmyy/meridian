@@ -71,7 +71,7 @@ export default function AllocationsPage() {
   });
 
   // ── Spoke reads (Arbitrum Sepolia) ────────────────────────────────────────
-  // getAllocations() — per-adapter balance breakdown from the spoke itself
+  // getAllocations(), per-adapter balance breakdown from the spoke itself
   const { data: allocations, refetch: refetchAllocations } = useReadContract({
     address: CONTRACTS.arbSpoke.address,
     abi: SPOKE_ABI,
@@ -212,7 +212,7 @@ export default function AllocationsPage() {
             </div>
           </Card>
 
-          {/* Base Sepolia — not yet deployed */}
+          {/* Base Sepolia: not yet deployed */}
           <Card className="flex flex-col gap-5" style={{ opacity: 0.6 }}>
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-2">
@@ -293,14 +293,14 @@ export default function AllocationsPage() {
             <strong style={{ color: "var(--color-text)" }}>Staleness: </strong>
             Spoke balances are reported after each CCIP callback (CONFIRM_RECEIPT, CONFIRM_REBALANCE,
             REPORT_BALANCE, CONFIRM_WITHDRAWAL). A spoke is considered stale after 1 hour without
-            a report — stale spokes trigger Path 2 withdrawals. Live event updates arrive via
+            a report, and stale spokes trigger Path 2 withdrawals. Live event updates arrive via
             <strong style={{ color: "var(--color-text)" }}> SpokeBalanceUpdated</strong>.
           </p>
         </Card>
 
       </main>
 
-      {/* Event toasts — AdapterSet, AdapterRemoved */}
+      {/* Event toasts: AdapterSet, AdapterRemoved */}
       <EventToast toasts={toasts} onDismiss={dismiss} />
     </div>
   );

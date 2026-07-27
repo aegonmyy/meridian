@@ -260,7 +260,7 @@ export default function DashboardPage() {
             ? <AllocationBar segments={allocationSegments} />
             : (
               <p className="text-xs py-2" style={{ color: "var(--color-muted)" }}>
-                No spoke balances reported yet — allocation data will appear after CCIP confirmations.
+                No spoke balances reported yet. Allocation data will appear after CCIP confirmations.
               </p>
             )
           }

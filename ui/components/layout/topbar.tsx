@@ -30,7 +30,7 @@ export function Topbar({ title }: { title: string }) {
       className="flex items-center justify-between h-16 px-4 sm:px-8 border-b shrink-0"
       style={{ background: "var(--color-card)", borderColor: "var(--color-border)" }}
     >
-      {/* Logo icon only on mobile — no wordmark */}
+      {/* Logo icon only on mobile, without the wordmark */}
       <div className="flex items-center md:hidden">
         <div
           className="h-7 w-7 rounded-lg flex items-center justify-center text-white text-xs font-bold"
@@ -40,7 +40,7 @@ export function Topbar({ title }: { title: string }) {
         </div>
       </div>
 
-      {/* Page title — only on desktop where sidebar provides the brand */}
+      {/* Page title: only on desktop where sidebar provides the brand */}
       <h1 className="hidden md:block text-lg font-semibold" style={{ color: "var(--color-text)" }}>
         {title}
       </h1>
@@ -58,7 +58,7 @@ export function Topbar({ title }: { title: string }) {
         {isConnected ? (
           <div className="flex items-center gap-1 rounded-xl border overflow-hidden text-xs"
             style={{ background: "var(--color-bg)", borderColor: "var(--color-border)" }}>
-            {/* Green dot + address — click to copy */}
+            {/* Green dot and address, click to copy */}
             <button
               onClick={copyAddress}
               title={copied ? "Copied!" : "Click to copy address"}

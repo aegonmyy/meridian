@@ -12,8 +12,8 @@ import {ZeroWithdrawal, InsufficientRecallLiquidity, NoPendingWithdrawal, NotWit
 ///         withdrawal engine, claim-time settlement, cancellation, share-price accounting
 ///         (totalAssets/totalManagedAssets), and the spoke-selection/freshness/idle-balance
 ///         helpers those paths depend on.
-/// @dev R-4 of the Hub modularization — final step for Hub. Sibling to HubAdminModule and
-///      HubMessagingModule — all three inherit HubStorage directly and none inherit each
+/// @dev R-4 of the Hub modularization, final step for Hub. Sibling to HubAdminModule and
+///      HubMessagingModule, all three inherit HubStorage directly and none inherit each
 ///      other.
 ///      Implements 2 hooks declared in HubStorage (bodiless `virtual`, `override` here):
 ///      _idleBalance (called cross-module from HubMessagingModule's sendToSpoke and
@@ -21,7 +21,7 @@ import {ZeroWithdrawal, InsufficientRecallLiquidity, NoPendingWithdrawal, NotWit
 ///      HubMessagingModule._handleReportBalanceCallback).
 ///      Calls 3 hooks implemented in HubMessagingModule: _newMessageId (bare call),
 ///      _requestAllBalanceReports and the 3-arg recallFromSpoke overload (both via
-///      `this.fn()` self-calls to change msg.sender context for the onlyRebalancer check —
+///      `this.fn()` self-calls to change msg.sender context for the onlyRebalancer check,
 ///      see HubStorage's onlyRebalancer NatSpec). Also implements the external
 ///      attemptSettlement hook (called cross-module via `this.attemptSettlement(...)` from
 ///      HubMessagingModule's two report/withdrawal callbacks).
@@ -32,12 +32,12 @@ abstract contract HubWithdrawalModule is HubStorage {
     // ERC4626 Overrides
     // =========================================================================
 
-    /// @notice Overrides ERC4626._deposit — no additional logic needed beyond standard behaviour
-    /// @dev totalPrincipal tracking was removed as it was dead state — totalAssets() via
+    /// @notice Overrides ERC4626._deposit, no additional logic needed beyond standard behaviour
+    /// @dev totalPrincipal tracking was removed as it was dead state, totalAssets() via
     ///      totalManagedAssets() is the source of truth for share pricing.
-    ///      WI-7: whenNotPaused — user deposits pause while any spoke report is quarantined.
+    ///      WI-7: whenNotPaused, user deposits pause while any spoke report is quarantined.
     ///      (Whether capital-movement functions like sendToSpoke/recallFromSpoke should also
-    ///      be gated is Open Questions #4 — not decided here; only user entry/exit is paused.)
+    ///      be gated is Open Questions #4: not decided here; only user entry/exit is paused.)
     /// @param caller Address initiating the deposit
     /// @param receiver Address receiving the minted shares
     /// @param assets Amount of USDC being deposited
@@ -53,33 +53,33 @@ abstract contract HubWithdrawalModule is HubStorage {
 
     /// @notice Overrides ERC4626._withdraw to implement the WI-4 three-path async withdrawal engine
     /// @dev Shares are transferred to hub at start and only burned on final settlement.
-    ///      No super() call — full flow is owned here.
-    ///      messageId is derived from a monotonic nonce via _newMessageId — collision-free.
+    ///      No super() call: full flow is owned here.
+    ///      messageId is derived from a monotonic nonce via _newMessageId, collision-free.
     ///      Path 1 (sync): idle >= assets AND all spokes fresh → immediate settlement at the
     ///        quote taken this instant (no daylight between quote and settlement).
     ///      Path 2 (async): idle >= assets AND any spoke stale → queue + REPORT_BALANCE;
-    ///        settles once ALL spokes report fresh (not on the first report — that was a bug).
+    ///        settles once all spokes report fresh, not on the first report, which was a bug.
     ///      Path 3 (async): idle < assets → reserve available idle, plan recall legs across
     ///        active spokes by descending spokeBalances, haircut-capped
     ///        (RECALL_HAIRCUT_BPS) per leg. If the shortfall cannot be fully planned even
     ///        across every active spoke, the ENTIRE call reverts with
-    ///        InsufficientRecallLiquidity — fail-closed, nothing locks, user keeps shares.
+    ///        InsufficientRecallLiquidity, fail-closed, nothing locks, user keeps shares.
     ///        Only if fully coverable does the hub commit (reserve idle, create the pending
     ///        entry) and dispatch legs. Settlement itself only happens once ALL of this
-    ///        entry's legs have landed (pendingLegs == 0) — see _attemptSettleWithdrawal's
+    ///        entry's legs have landed (pendingLegs == 0), see _attemptSettleWithdrawal's
     ///        FX-1 NatSpec for why early settlement out of free idle was removed.
     ///      CLAIM-TIME PRICING (user-facing behavioral change from v1): for Path 2/3, the
     ///      amount actually paid out is previewRedeem(shares) recomputed AT SETTLEMENT, not
     ///      the quote taken here. Yield accrued while pending is credited to the withdrawer;
     ///      a loss reported while pending reduces their payout. See _attemptSettleWithdrawal.
-    ///      WI-7: whenNotPaused — new withdrawal REQUESTS pause while any spoke report is
+    ///      WI-7: whenNotPaused, new withdrawal REQUESTS pause while any spoke report is
     ///      quarantined. Settlement of ALREADY-pending withdrawals (attemptSettlement,
-    ///      cancelWithdrawal) is intentionally NOT gated — those must keep working during a
+    ///      cancelWithdrawal) is intentionally left ungated: those must keep working during a
     ///      pause so users with in-flight withdrawals aren't additionally stuck.
     /// @param caller Address initiating the withdrawal (may differ from owner if approved)
     /// @param receiver Address to receive the USDC
     /// @param owner Address whose shares are being redeemed
-    /// @param assets Ignored — recalculated internally via previewRedeem(shares)
+    /// @param assets Ignored, recalculated internally via previewRedeem(shares)
     /// @param shares Number of shares to burn
     function _withdraw(
         address caller,
@@ -100,13 +100,13 @@ abstract contract HubWithdrawalModule is HubStorage {
         if (idleFree >= assets) {
             reservedAssets += assets;
             if (_allSpokesFresh()) {
-                // Path 1 — synchronous settlement, quote == payout, no entry created
+                // Path 1, synchronous settlement, quote == payout, no entry created
                 reservedAssets -= assets;
                 _burn(address(this), shares);
                 IERC20(asset()).safeTransfer(receiver, assets);
                 emit WithdrawalProcessed(owner, receiver, assets, _messageId);
             } else {
-                // Path 2 — queue and request fresh spoke balances; settles when all fresh
+                // Path 2, queue and request fresh spoke balances; settles when all fresh
                 pendingWithdrawals[_messageId] = PendingWithdrawal({
                     shares: shares,
                     quotedAssets: assets,
@@ -123,8 +123,8 @@ abstract contract HubWithdrawalModule is HubStorage {
             return;
         }
 
-        // Path 3 — insufficient idle, plan recall legs across active spokes.
-        // Planning is a pure dry run first — no state committed, no CCIP dispatched — so an
+        // Path 3, insufficient idle, plan recall legs across active spokes.
+        // Planning is a pure dry run first, no state committed, no CCIP dispatched. So an
         // uncoverable shortfall can revert the ENTIRE call cleanly (fail-closed, nothing locks).
         uint256 shortfall = assets - idleFree;
         uint64[] memory order = _spokesByDescendingBalance();
@@ -140,14 +140,14 @@ abstract contract HubWithdrawalModule is HubStorage {
             revert InsufficientRecallLiquidity(shortfall, shortfall - remaining);
         }
 
-        // Fully coverable — commit BEFORE dispatch, including the final leg count.
-        // FX-7: pendingLegs is written HERE, before any leg is dispatched — not after the
+        // Fully coverable, so commit before dispatch, including the final leg count.
+        // FX-7: pendingLegs is written here, before any leg is dispatched, rather than after the
         // loop. A leg's confirm can arrive synchronously WHILE this loop is still running
         // for later legs (this test harness; production CCIP always resolves dispatch and
         // confirm-arrival in separate transactions, so this can't happen there). If
         // pendingLegs were still 0 at that moment, the arriving leg's decrement guard
         // (`if (pendingLegs > 0) pendingLegs -= 1`) would silently no-op, and the later
-        // post-loop write would stomp pendingLegs back to the full original legCount —
+        // post-loop write would stomp pendingLegs back to the full original legCount,
         // permanently overcounting outstanding legs by one per mid-loop arrival, which can
         // never fully reach 0 again once the truly-last leg lands, permanently blocking
         // FX-1's Path 3 settlement gate. Writing here first makes this harness's behavior
@@ -189,11 +189,11 @@ abstract contract HubWithdrawalModule is HubStorage {
     /// @notice Cancels a pending withdrawal after WITHDRAWAL_TIMEOUT has elapsed
     /// @dev Backstop for a withdrawal stuck in SettlementDeferred, or a Path 3 leg that never
     ///      arrives. Returns escrowed shares to the owner and releases the reservation.
-    ///      Already-arrived leg funds (if any) remain vault idle — correct, since the caller
+    ///      Already-arrived leg funds (if any) remain vault idle. Correct, since the caller
     ///      got their shares back and thus their proportional claim on those assets too.
     ///      Late-arriving legs after cancellation hit the unknown-leg no-op path in
     ///      _handleWithdrawalCallback (legToWithdrawal still resolves, but
-    ///      pendingWithdrawals[id].shares == 0 after this delete) — no special handling needed.
+    ///      pendingWithdrawals[id].shares == 0 after this delete), no special handling needed.
     /// @param id The withdrawal id to cancel
     function cancelWithdrawal(bytes32 id) external {
         PendingWithdrawal memory entry = pendingWithdrawals[id];
@@ -209,9 +209,9 @@ abstract contract HubWithdrawalModule is HubStorage {
     }
 
     /// @notice Attempts to settle a pending withdrawal at its claim-time price
-    /// @dev Permissionless — anyone can nudge a pending withdrawal to retry settlement (also
+    /// @dev Permissionless: anyone can nudge a pending withdrawal to retry settlement (also
     ///      called internally, wrapped in try/catch, from the CCIP arrival callbacks so an
-    ///      external-call failure here — e.g. safeTransfer to an incompatible receiver — can
+    ///      external-call failure here, e.g. safeTransfer to an incompatible receiver. Can
     ///      never revert a token-carrying CCIP execution). Never reverts on insolvency; see
     ///      _attemptSettleWithdrawal.
     /// @param id The withdrawal id to attempt settlement for
@@ -219,33 +219,33 @@ abstract contract HubWithdrawalModule is HubStorage {
         _attemptSettleWithdrawal(id);
     }
 
-    /// @notice Core non-reverting settlement attempt — claim-time pricing, freshness/leg
+    /// @notice Core non-reverting settlement attempt, claim-time pricing, freshness/leg
     ///         gated, solvency-gated
     /// @dev FX-1: gating moved INSIDE this function so it holds for every caller, including
     ///      the permissionless external `attemptSettlement`. Previously the freshness/arrival
-    ///      gates existed only at the CCIP callback call sites — anyone could call
+    ///      gates existed only at the CCIP callback call sites, anyone could call
     ///      `attemptSettlement(id)` directly the instant a Path 2 withdrawal was queued and
     ///      settle at the still-stale price, reopening the exact bug this engine fixed.
     ///      Classification is derived purely from stored state (no separate "which path"
     ///      flag needed): an entry with `pendingLegs > 0 || arrivedAssets > 0` was routed
     ///      through Path 3 (it has, or is expecting, recall legs); otherwise it's a pure
     ///      Path 2 entry.
-    ///      - Pure Path 2: defer unless `_allSpokesFresh()` — settlement must use a fully
+    ///      - Pure Path 2: defer unless `_allSpokesFresh()`, since settlement must use a fully
     ///        refreshed balance picture, not whatever was stale at request time.
-    ///      - Path 3: defer unless `pendingLegs == 0` — DECIDED POLICY (see FX-1 escalation):
+    ///      - Path 3: defer unless `pendingLegs == 0`. Decided policy (see FX-1 escalation):
     ///        no early settlement out of free idle while legs are still outstanding. A
     ///        user's own recalled liquidity is no longer a commons another withdrawer can
-    ///        claim first via idle, and settlement timing becomes predictable — once all of
+    ///        claim first via idle, and settlement timing becomes predictable. Once all of
     ///        THIS entry's legs have landed, not whenever idle happens to be sufficient.
     ///      CLAIM-TIME PRICING: payout is previewRedeem(shares) recomputed NOW, not the quote
-    ///      taken at request time. quotedAssets is reference/sizing only, never a promise —
+    ///      taken at request time. quotedAssets is reference/sizing only, never a promise,
     ///      this is the decided v2 semantic (yield during flight settles from free idle by
     ///      design; a loss during flight reduces payout).
     ///      SOLVENCY: settles only if idle currently claimable by THIS entry alone (total idle
-    ///      minus everyone else's reservation) covers payout — never touches other entries'
+    ///      minus everyone else's reservation) covers payout: never touches other entries'
     ///      reservations. If not yet solvent, emits SettlementDeferred and returns; the entry
     ///      stays pending for a later retry (another leg arrival, cancellation is the backstop).
-    ///      Never reverts on insufficiency — that would poison a token-carrying CCIP message.
+    ///      Never reverts on insufficiency: that would poison a token-carrying CCIP message.
     /// @param id The withdrawal id to attempt settlement for
     function _attemptSettleWithdrawal(bytes32 id) internal {
         PendingWithdrawal memory entry = pendingWithdrawals[id];
@@ -290,11 +290,11 @@ abstract contract HubWithdrawalModule is HubStorage {
     // =========================================================================
 
     /// @notice Returns active spoke selectors ordered by descending reported balance
-    /// @dev WI-4 replaces the old single-best-spoke selection — Path 3 now plans legs
+    /// @dev WI-4 replaces the old single-best-spoke selection. Path 3 now plans legs
     ///      across as many spokes as needed (greedy, largest first) rather than recalling
     ///      everything from one spoke. spokeBalances may be slightly stale; RECALL_HAIRCUT_BPS
     ///      in the caller is the safety margin for that, not this ordering.
-    ///      Selection sort — active spoke counts are small by design (a handful per protocol).
+    ///      Selection sort: active spoke counts are small by design (a handful per protocol).
     /// @return sorted Active chain selectors, descending by spokeBalances
     function _spokesByDescendingBalance()
         internal
@@ -338,9 +338,9 @@ abstract contract HubWithdrawalModule is HubStorage {
     }
 
     /// @notice Aggregates total USDC managed across hub and all active spokes
-    /// @dev Returns idle only when no spokes registered — inTransitAssets is always
+    /// @dev Returns idle only when no spokes registered. inTransitAssets is always
     ///      zero in that state so one SLOAD is saved.
-    ///      Spoke balances may lag by up to MAX_STALENESS between reports — this is
+    ///      Spoke balances may lag by up to MAX_STALENESS between reports. This is
     ///      by design and accepted as a v1 tradeoff.
     /// @return total Sum of idle USDC on hub + in-transit USDC + all active spoke balances
     function totalManagedAssets() internal view returns (uint256 total) {
@@ -355,14 +355,14 @@ abstract contract HubWithdrawalModule is HubStorage {
         return total;
     }
 
-    /// @notice Returns the USDC balance sitting idle on hub — not deployed or in transit
+    /// @notice Returns the USDC balance sitting idle on hub, not deployed or in transit
     /// @return Idle USDC balance of this contract
     function _idleBalance() internal view override returns (uint256) {
         return IERC20(asset()).balanceOf(address(this));
     }
 
     /// @notice Checks whether all active spoke balance reports are within MAX_STALENESS
-    /// @dev Returns false if no spokes are registered — safe default that prevents
+    /// @dev Returns false if no spokes are registered. Safe default that prevents
     ///      Path 1 from triggering when there is nothing to be fresh about.
     ///      A spoke with lastReportTimestamp == 0 is always considered stale.
     /// @return True only if every active spoke has reported within the last MAX_STALENESS seconds
@@ -384,7 +384,7 @@ abstract contract HubWithdrawalModule is HubStorage {
     // =========================================================================
 
     /// @notice Returns the length of the spokeChainSelectors array
-    /// @dev Includes inactive (removed) spokes — length only grows, never shrinks.
+    /// @dev Includes inactive (removed) spokes: length only grows, never shrinks.
     ///      Use spokes[selector].exists to check active status.
     /// @return Length of the spokeChainSelectors array
     function spokeChainSelectorsLength() external view returns (uint256) {

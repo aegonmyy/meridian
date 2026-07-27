@@ -2,12 +2,12 @@
 pragma solidity ^0.8.33;
 
 /// @notice Thrown when two arrays that must be equal in length are not
-/// @dev Used in weightedApy() — allocations and netApys must be parallel arrays
+/// @dev Used in weightedApy(): allocations and netApys must be parallel arrays
 error arrayOutOfBound();
 
 /// @title AllocationMaths
 /// @notice Pure math library for computing and validating yield allocation proposals
-/// @dev All functions are internal pure — no state reads or writes, no CCIP dependency.
+/// @dev All functions are internal pure: no state reads or writes, no CCIP dependency.
 ///      Used exclusively by the Rebalancer contract to evaluate agent proposals before
 ///      forwarding capital movement instructions to the HubVault.
 ///
@@ -23,7 +23,7 @@ library AllocationMaths {
 
     /// @notice Computes net APY by subtracting protocol costs from gross APY
     /// @dev Both inputs and output are in basis points.
-    ///      Reverts with arithmetic underflow if costs exceed gross — intentional,
+    ///      Reverts with arithmetic underflow if costs exceed gross. That is intentional:
     ///      a negative net APY is not a valid input to the allocation system.
     /// @param _grossApy Gross APY of the protocol in basis points (e.g. 500 = 5%)
     /// @param _costs Total costs of the protocol in basis points (e.g. 50 = 0.5%)
@@ -38,7 +38,7 @@ library AllocationMaths {
 
     /// @notice Computes the weighted average APY across a set of allocations and their net APYs
     /// @dev Weighted average formula: sum(allocation[i] * netApy[i]) / 10_000
-    ///      Both arrays must be the same length and represent parallel data — allocation[i]
+    ///      Both arrays must be the same length and represent parallel data, allocation[i]
     ///      corresponds to netApy[i]. Reverts with arrayOutOfBound if lengths differ.
     ///      Used to compare current vs proposed allocations in shouldRebalance().
     /// @param _allocations Array of allocation weights in basis points (must sum to 10_000)
@@ -65,7 +65,7 @@ library AllocationMaths {
 
     /// @notice Validates a 2D allocation array against protocol safety constraints
     /// @dev _allocations[i][j] represents the allocation for protocol j on chain i in basis points.
-    ///      Four constraints enforced — returns false (not revert) on any violation:
+    ///      Four constraints enforced; a violation returns false rather than reverting:
     ///      1. Dust floor: each non-zero allocation must be >= 500 bps (5%)
     ///         Prevents economically meaningless positions with high relative gas cost.
     ///      2. Per-market cap: no single allocation may exceed 6000 bps (60%)
@@ -74,7 +74,7 @@ library AllocationMaths {
     ///         Limits concentration risk on a single L2.
     ///      4. Grand total: sum of all allocations across all chains must equal exactly 10000 bps
     ///         Ensures 100% of capital is accounted for.
-    ///      Zero allocations are valid — they represent a protocol not currently used.
+    ///      Zero allocations are valid: they represent a protocol not currently used.
     /// @param _allocations 2D array where _allocations[chain][protocol] is a bps value
     /// @return True if all constraints pass, false if any constraint is violated
     function validateAllocation(
@@ -103,7 +103,7 @@ library AllocationMaths {
     /// @dev Returns true only if optimalWeightedApy strictly exceeds currentWeightedApy
     ///      by at least 50 bps (0.5%). This threshold prevents unnecessary rebalances
     ///      that would incur CCIP fees for marginal APY improvement.
-    ///      Returns false if optimal <= current — never rebalance to a worse or equal position.
+    ///      Returns false if optimal <= current: never rebalance to a worse or equal position.
     /// @param currentWeightedApy Weighted average APY of current allocation in basis points
     /// @param optimalWeightedApy Weighted average APY of proposed allocation in basis points
     /// @return True if the gain is >= 50 bps and rebalancing is worthwhile
@@ -123,11 +123,11 @@ library AllocationMaths {
     /// @notice Validates that no single allocation in a proposal exceeds 30% of totalAssets
     /// @dev Converts each bps allocation to an absolute USDC amount and compares against
     ///      maxMove = 30% of totalAssets. Returns false (not revert) if any allocation exceeds the cap.
-    ///      Guards against the agent moving too much capital in a single operation —
+    ///      Guards against the agent moving too much capital in a single operation,
     ///      limits potential loss if the agent submits a bad proposal.
-    ///      Zero totalAssets: all amounts are 0, maxMove is 0 — all pass trivially.
+    ///      Zero totalAssets: all amounts are 0, maxMove is 0, all pass trivially.
     ///      Exactly 30% passes (strict greater than, not greater than or equal).
-    /// @param allocations 2D array of bps allocations — same structure as validateAllocation input
+    /// @param allocations 2D array of bps allocations, same structure as validateAllocation input
     /// @param totalAssets Total USDC managed by the hub in 6-decimal absolute units
     /// @return True if every individual allocation converts to <= 30% of totalAssets
     function validateSingleMove(

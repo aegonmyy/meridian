@@ -50,7 +50,7 @@ error InvalidRecallAmount();
 /// @notice Thrown when a Path 3 withdrawal's shortfall cannot be fully covered by recalling
 ///         from active spokes even after planning legs across all of them
 /// @dev shortfall: assets - idleFree. coverable: sum of haircut-capped leg amounts found.
-///      Fail-closed — the whole _withdraw call reverts, no shares move, nothing locks.
+///      Fail-closed: the whole _withdraw call reverts, no shares move, nothing locks.
 error InsufficientRecallLiquidity(uint256 shortfall, uint256 coverable);
 
 /// @notice Thrown when cancelWithdrawal is called by anyone other than the withdrawal's owner

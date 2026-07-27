@@ -11,10 +11,10 @@ import {ZeroAddress, AdapterNotFound, AmountCannotBeZero, PendingConfirmsOutstan
 /// @notice Owner-only adapter registry management (setAdapter/removeAdapter), Hub address
 ///         rotation, idle redeployment, and the adapter-registry view accessors.
 /// @dev R-6 of the Spoke modularization. Sibling to SpokeHandlersModule and
-///      SpokeConfirmsModule — all three inherit SpokeStorage directly and none inherit each
+///      SpokeConfirmsModule, all three inherit SpokeStorage directly and none inherit each
 ///      other. No function here is called across module boundaries, so no hooks are
 ///      implemented in this file.
-///      getAllocations/activeAdaptersLength placement is a judgment call — the plan doesn't
+///      getAllocations/activeAdaptersLength placement is a judgment call: the plan doesn't
 ///      explicitly assign them; kept here alongside the adapter registry they read, mirroring
 ///      isValidSpoke's placement in HubAdminModule.
 abstract contract SpokeAdminModule is SpokeStorage {
@@ -28,7 +28,7 @@ abstract contract SpokeAdminModule is SpokeStorage {
     /// @dev Uses `everRegistered` to prevent duplicate protocolId entries in activeAdapters
     ///      when a protocol is removed then re-added. On first registration protocolId is
     ///      pushed to activeAdapters. On update only the adapter address changes.
-    ///      Uses forceApprove pattern — adapter contracts may require non-zero allowance resets.
+    ///      Uses forceApprove pattern: adapter contracts may require non-zero allowance resets.
     /// @param _protocolId Arbitrary bytes32 identifier for the protocol (e.g. keccak256("AAVE"))
     /// @param _adapter Address of the IYieldSource adapter implementing deposit/withdraw/totalAssets
     function setAdapter(
@@ -46,10 +46,10 @@ abstract contract SpokeAdminModule is SpokeStorage {
     }
 
     /// @notice Disables a yield adapter by setting its exists flag to false
-    /// @dev Emergency mechanism — instantly stops capital from being deployed to this protocol.
-    ///      Does not remove the protocolId from activeAdapters — inactive entries are skipped
-    ///      during iteration via the exists flag. No timelock in v1 — owner is trusted.
-    ///      Capital already deployed to this adapter is NOT automatically withdrawn.
+    /// @dev Emergency mechanism: instantly stops capital from being deployed to this protocol.
+    ///      Does not remove the protocolId from activeAdapters: inactive entries are skipped
+    ///      during iteration via the exists flag. No timelock in v1. Owner is trusted.
+    ///      Capital already deployed to this adapter is not automatically withdrawn.
     ///      A separate WITHDRAW_AMOUNT instruction from hub is needed to reclaim funds.
     /// @param _protocolId The bytes32 identifier of the protocol to disable
     function removeAdapter(bytes32 _protocolId) external onlyOwner {
@@ -59,14 +59,14 @@ abstract contract SpokeAdminModule is SpokeStorage {
         emit AdapterRemoved(_protocolId);
     }
 
-    /// @notice Updates the Hub address — use when Hub is redeployed with new features
+    /// @notice Updates the Hub address: use when Hub is redeployed with new features
     /// @dev All subsequent CCIP messages will only be accepted from the new Hub address.
     ///      Pending in-flight messages from the old Hub will be rejected on arrival.
     ///      Ensure no critical messages are in-flight before calling.
     /// @param _hub New HubVault address on Ethereum
     /// @dev WI-6 guard: reverts while any pendingConfirms entry is unresolved. A confirm
     ///      queued under the old Hub relationship (messageId semantics, expected sender)
-    ///      could resolve incorrectly — or not at all — after HUB is repointed. Resolve or
+    ///      could resolve incorrectly, or not at all, once HUB is repointed. Resolve or
     ///      wait out every queued confirm via retryConfirm() before rotating Hub.
     function setHub(address _hub) external onlyOwner {
         if (_hub == address(0)) revert ZeroAddress();
@@ -79,8 +79,8 @@ abstract contract SpokeAdminModule is SpokeStorage {
     /// @dev v1: onlyOwner. Spoke idle can accumulate from partial DEPOSIT skips (WI-2c),
     ///      shortfalls left over after a WITHDRAW_AMOUNT recall, or direct transfers.
     ///      This lets an operator redeploy that idle instead of it sitting unproductively.
-    ///      Races with retryConfirm() on token-carrying confirms — see ConfirmFundsUnavailable.
-    /// @param _protocolId Target adapter identifier — must be currently registered and active
+    ///      Races with retryConfirm() on token-carrying confirms, see ConfirmFundsUnavailable.
+    /// @param _protocolId Target adapter identifier: must be currently registered and active
     /// @param _amount Amount of spoke idle USDC to deposit
     function deployIdle(bytes32 _protocolId, uint256 _amount) external onlyOwner {
         if (_amount == 0) revert AmountCannotBeZero();
@@ -96,7 +96,7 @@ abstract contract SpokeAdminModule is SpokeStorage {
     // =========================================================================
 
     /// @notice Returns a snapshot of each registered adapter's current balance
-    /// @dev Array length always equals activeAdapters.length — includes removed adapters
+    /// @dev Array length always equals activeAdapters.length, includes removed adapters
     ///      as zero-initialized entries (protocolId == bytes32(0), balance == 0).
     ///      Callers should filter by protocolId != bytes32(0) to skip removed entries.
     ///      Off-chain agents use this to observe current allocation before proposing rebalances.
@@ -120,7 +120,7 @@ abstract contract SpokeAdminModule is SpokeStorage {
     }
 
     /// @notice Returns the length of the activeAdapters array
-    /// @dev Includes removed adapters — length only grows, never shrinks.
+    /// @dev Includes removed adapters: length only grows, never shrinks.
     ///      Use adapters[id].exists to check whether a specific adapter is still active.
     /// @return Length of the activeAdapters array
     function activeAdaptersLength() external view returns (uint256) {

@@ -7,32 +7,32 @@ import {IHub} from "./interfaces/IHub.sol";
 import {AllocationProposal} from "./interfaces/IRebalancer.sol";
 
 /// @title Rebalancer
-/// @notice Safety layer between the off-chain agent and the HubVault — validates all allocation
+/// @notice Safety layer between the off-chain agent and the HubVault, validates all allocation
 ///         proposals and intra-spoke rebalance instructions before forwarding to hub.
 /// @dev All capital movement flows through this contract. The agent (AgentConsumer) submits
 ///      proposals; Rebalancer enforces on-chain guards before calling hub functions.
 ///      Guards enforced in order:
-///      1. Access control — only owner or AgentConsumer
-///      2. Allocation validity — sum, per-market cap, chain cap, dust floor
-///      3. APY threshold — optimal must beat current by >= 50 bps (proposeAllocation only)
-///      4. Chain whitelist — all selectors in proposal must be approved
-///      5. Protocol whitelist — all protocol ids must be approved
-///      6. Max single move — no allocation may exceed 30% of totalAssets
+///      1. Access control: only owner or AgentConsumer
+///      2. Allocation validity: sum, per-market cap, chain cap, dust floor
+///      3. APY threshold: optimal must beat current by >= 50 bps (proposeAllocation only)
+///      4. Chain whitelist: all selectors in proposal must be approved
+///      5. Protocol whitelist: all protocol ids must be approved
+///      6. Max single move: no allocation may exceed 30% of totalAssets
 contract Rebalancer {
     // =========================================================================
     // State Variables
     // =========================================================================
 
-    /// @notice HubVault contract on Ethereum — target for all capital movement calls
-    /// @dev Immutable — set once at deployment. Hub must have this contract as its REBALANCER.
+    /// @notice HubVault contract on Ethereum, target for all capital movement calls
+    /// @dev Immutable: set once at deployment. Hub must have this contract as its REBALANCER.
     IHub public immutable HUB;
 
-    /// @notice Address of the AgentConsumer contract — authorized alongside owner to call guards
-    /// @dev Immutable — off-chain agent submits proposals through AgentConsumer which calls here.
+    /// @notice Address of the AgentConsumer contract, authorized alongside owner to call guards
+    /// @dev Immutable, off-chain agent submits proposals through AgentConsumer which calls here.
     address public immutable AGENT_CONSUMER;
 
-    /// @notice Contract owner — authorized to call all functions and manage whitelists
-    /// @dev Mutable — can be transferred. Should be a multisig before mainnet.
+    /// @notice Contract owner, authorized to call all functions and manage whitelists
+    /// @dev Mutable: can be transferred. Should be a multisig before mainnet.
     address public owner;
 
     /// @notice Maps CCIP chain selectors to their whitelist status
@@ -75,7 +75,7 @@ contract Rebalancer {
     error InvalidAllocation();
 
     /// @notice Thrown when a proposal's total requested amount exceeds hub's unreserved idle
-    /// @dev WI-3 friendly pre-check — fails legibly before dispatching any per-chain sends,
+    /// @dev WI-3 friendly pre-check, fails legibly before dispatching any per-chain sends,
     ///      instead of a partial dispatch dying deep inside a later chain's CCIP token
     ///      transfer. Mirrors (and is intentionally more conservative than racing with)
     ///      the authoritative guard enforced in HUB.sendToSpoke itself.
@@ -86,7 +86,7 @@ contract Rebalancer {
     // =========================================================================
 
     /// @notice Emitted after a successful rebalance() or proposeAllocation() execution
-    /// @dev RebalanceExecuted is not currently emitted — reserved for future use
+    /// @dev RebalanceExecuted is not currently emitted: reserved for future use
     /// @param timestamp Block timestamp of execution
     /// @param weightedApy Optimal weighted APY from the accepted proposal (0 for rebalance())
     event RebalanceExecuted(uint256 timestamp, uint256 weightedApy);
@@ -129,12 +129,12 @@ contract Rebalancer {
     // =========================================================================
 
     /// @notice Deploys the Rebalancer with immutable hub and agent references
-    /// @dev All three addresses are required — zero address for any reverts.
+    /// @dev All three addresses are required, zero address for any reverts.
     ///      Deploy Rebalancer after Hub is deployed (needs hub address).
     ///      Call hub.setRebalancer(address(this)) after deployment.
     /// @param _hub Address of the HubVault on Ethereum
     /// @param _agentConsumer Address of the AgentConsumer contract
-    /// @param _owner Address of the contract owner — should be a multisig before mainnet
+    /// @param _owner Address of the contract owner: should be a multisig before mainnet
     constructor(address _hub, address _agentConsumer, address _owner) {
         if (
             _hub == address(0) ||
@@ -150,11 +150,11 @@ contract Rebalancer {
     // Core Functions
     // =========================================================================
 
-    /// @notice Executes an intra-spoke rebalance — moves capital between adapters on one chain
+    /// @notice Executes an intra-spoke rebalance, moves capital between adapters on one chain
     /// @dev Guards enforced in order: access control, source != target,
     ///      amount != 0, chain whitelisted, both protocols whitelisted.
-    ///      Does NOT validate APY gain — intra-spoke rebalances are manual operator decisions.
-    ///      Does NOT enforce max single move — amount is absolute not proportional to totalAssets.
+    ///      Does not validate APY gain: intra-spoke rebalances are manual operator decisions.
+    ///      Does not enforce max single move: amount is absolute not proportional to totalAssets.
     ///      Calls hub.rebalance() which sends a REBALANCE CCIP message to the target spoke.
     /// @param _source bytes32 protocol identifier of the source adapter to withdraw from
     /// @param _target bytes32 protocol identifier of the target adapter to deposit into
@@ -184,14 +184,14 @@ contract Rebalancer {
             targetAmount: 0
         });
         // Message id is derived inside the hub via its nonce'd _newMessageId helper
-        // (WI-1) — the rebalancer no longer derives collision-prone content ids.
+        // (WI-1): the rebalancer no longer derives collision-prone content ids.
         HUB.rebalance(_chainSelector, _instructions);
     }
 
-    /// @notice Recalls capital off an overweight spoke back to hub idle — the "move weight
+    /// @notice Recalls capital off an overweight spoke back to hub idle. The "move weight
     ///         off a chain" lever that proposeAllocation alone cannot provide
     /// @dev WI-3 (Issue 5, Option A). Guards: access control, chain whitelisted, amount != 0.
-    ///      No pendingWithdrawal is created — the hub just credits the arrived tokens as
+    ///      No pendingWithdrawal is created: the hub just credits the arrived tokens as
     ///      ordinary idle and emits RecallCompleted once the CONFIRM_WITHDRAWAL lands.
     ///
     ///      Intended v1 operator flow (on-chain diff engine is explicitly out of scope, v2):
@@ -199,11 +199,11 @@ contract Rebalancer {
     ///        2. For each overweight chain, call recallFromSpoke(selector, amount) to pull
     ///           capital back to hub idle.
     ///        3. Await the hub's RecallCompleted event confirming the funds landed.
-    ///        4. Call proposeAllocation() sized against the now-larger idle balance —
+    ///        4. Call proposeAllocation() sized against the now-larger idle balance,
     ///           HUB.sendToSpoke's solvency guard (and this contract's own pre-check) will
     ///           reject a proposal sized before the recall actually lands.
-    /// @param _chainSelector CCIP chain selector of the spoke to recall from — must be whitelisted
-    /// @param _amount USDC amount to recall — must be nonzero
+    /// @param _chainSelector CCIP chain selector of the spoke to recall from. Must be whitelisted
+    /// @param _amount USDC amount to recall: must be nonzero
     function recallFromSpoke(
         uint64 _chainSelector,
         uint256 _amount
@@ -214,15 +214,15 @@ contract Rebalancer {
     }
 
     /// @notice Validates and executes a full cross-chain allocation proposal from the agent
-    /// @dev Five guards enforced in order — any failure reverts without side effects:
-    ///      1. onlyAuthorized — owner or AgentConsumer only
-    ///      2. InvalidAllocation — validateAllocation(proposedAllocations) must pass
-    ///      3. BelowThreshold — optimal weighted APY must exceed current by >= 50 bps
-    ///      4. ChainNotWhitelisted — all chainSelectors in proposal must be approved
-    ///      5. ProtocolNotWhitelisted — all protocolIds in proposal must be approved
+    /// @dev Five guards enforced in order; any failure reverts without side effects:
+    ///      1. onlyAuthorized: owner or AgentConsumer only
+    ///      2. InvalidAllocation: validateAllocation(proposedAllocations) must pass
+    ///      3. BelowThreshold: optimal weighted APY must exceed current by >= 50 bps
+    ///      4. ChainNotWhitelisted: all chainSelectors in proposal must be approved
+    ///      5. ProtocolNotWhitelisted: all protocolIds in proposal must be approved
     ///      On success: calls hub.sendToSpoke() per chain.
     ///      Known limitation: proposedAllocations amounts are in bps but sendToSpoke expects
-    ///      absolute USDC amounts — the TODO comment in code flags this conversion gap.
+    ///      absolute USDC amounts: the TODO comment in code flags this conversion gap.
     /// @param proposal The AllocationProposal struct containing current and proposed allocations,
     ///                 APYs, chain selectors, and protocol ids for all target chains
     function proposeAllocation(
@@ -316,7 +316,7 @@ contract Rebalancer {
     }
 
     /// @notice Removes a CCIP chain selector from the whitelist
-    /// @dev Capital already deployed to this chain is NOT recalled — only new deployments blocked.
+    /// @dev Capital already deployed to this chain is not recalled. Only new deployments are blocked.
     ///      Use in combination with a recall instruction to fully exit a chain.
     /// @param _chainSelector CCIP chain selector to remove from whitelist
     function removeChainFromWhitelist(
@@ -337,7 +337,7 @@ contract Rebalancer {
     }
 
     /// @notice Removes a protocol identifier from the whitelist
-    /// @dev Capital already deployed to this protocol is NOT recalled — only new deployments blocked.
+    /// @dev Capital already deployed to this protocol is not recalled. Only new deployments are blocked.
     ///      Use spoke.removeAdapter() on the target chain to fully disable a protocol.
     /// @param _protocolId bytes32 protocol identifier to remove from whitelist
     function removeProtocolFromWhitelist(
@@ -352,7 +352,7 @@ contract Rebalancer {
     // =========================================================================
 
     /// @notice Flattens a 2D uint256 array into a 1D array for AllocationMaths functions
-    /// @dev AllocationMaths.weightedApy expects flat arrays — this converts the nested
+    /// @dev AllocationMaths.weightedApy expects flat arrays: this converts the nested
     ///      per-chain per-protocol structure of AllocationProposal into a single sequence.
     ///      Order preserved: outer array iterated first, inner array second.
     /// @param arr 2D array where arr[chain][protocol] holds an allocation or APY value

@@ -17,7 +17,7 @@ interface IHub {
         bytes32 _messageId
     ) external;
 
-    /// @notice Rebalancer-driven recall — hub derives its own id, no pendingWithdrawal is created
+    /// @notice Rebalancer-driven recall, hub derives its own id, no pendingWithdrawal is created
     function recallFromSpoke(uint64 _chainSelector, uint256 _amount) external;
 
     function totalAssets() external view returns (uint256);

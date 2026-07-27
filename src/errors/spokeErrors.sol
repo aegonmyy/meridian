@@ -29,7 +29,7 @@ error InvalidConfirmIndex();
 error ConfirmAlreadyResolved();
 
 /// @notice Thrown when a token-carrying retryConfirm's USDC is no longer held by the spoke
-/// @dev Can happen if deployIdle() redeployed the parked USDC before the retry landed —
+/// @dev Can happen if deployIdle() redeployed the parked USDC before the retry landed,
 ///      see WI-2d race note in Spoke NatSpec.
 error ConfirmFundsUnavailable();
 

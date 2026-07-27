@@ -18,16 +18,16 @@ library CCIPHelpers {
     ///      in both HubVault._ccipReceive and SpokeVault._ccipReceive.
     ///
     ///      Hub → Spoke messages (outbound from hub):
-    ///      DEPOSIT        — hub sends USDC to spoke for deployment into yield adapters
-    ///      REBALANCE      — hub instructs spoke to move capital between adapters on same chain
-    ///      REPORT_BALANCE — hub requests spoke to report its current aggregated balance
-    ///      WITHDRAW_AMOUNT — hub instructs spoke to pull funds from adapters and return to hub
+    ///      DEPOSIT: hub sends USDC to spoke for deployment into yield adapters
+    ///      REBALANCE: hub instructs spoke to move capital between adapters on same chain
+    ///      REPORT_BALANCE: hub requests spoke to report its current aggregated balance
+    ///      WITHDRAW_AMOUNT: hub instructs spoke to pull funds from adapters and return to hub
     ///
     ///      Spoke → Hub messages (inbound to hub):
-    ///      CONFIRM_RECEIPT    — spoke confirms deposit completed, carries new spoke balance
-    ///      CONFIRM_WITHDRAWAL — spoke confirms funds were pulled and sent back to hub
-    ///      CONFIRM_REBALANCE  — spoke confirms intra-spoke rebalance completed, carries new balance
-    ///      REPORT_BALANCE     — spoke responds to hub's balance request, carries current balance
+    ///      CONFIRM_RECEIPT: spoke confirms deposit completed, carries new spoke balance
+    ///      CONFIRM_WITHDRAWAL: spoke confirms funds were pulled and sent back to hub
+    ///      CONFIRM_REBALANCE: spoke confirms intra-spoke rebalance completed, carries new balance
+    ///      REPORT_BALANCE: spoke responds to hub's balance request, carries current balance
     enum MessageType {
         DEPOSIT,
         REBALANCE,
@@ -43,29 +43,29 @@ library CCIPHelpers {
     // =========================================================================
 
     /// @notice Describes a single capital movement instruction for a yield adapter
-    /// @dev Used in both deposit and rebalance contexts — field semantics vary by message type:
+    /// @dev Used in both deposit and rebalance contexts, field semantics vary by message type:
     ///      DEPOSIT: adapter = target protocol, amount = USDC to deposit, targetAdapter/targetAmount unused
     ///      REBALANCE: adapter = source protocol, amount = USDC to move, targetAdapter = destination protocol
     ///      WITHDRAW_AMOUNT: adapter = bytes32(0), amount = USDC shortfall to recall, targetAdapter unused
     ///      CONFIRM_* messages: may carry zero-value placeholders for encoding consistency
     struct AdapterInstructions {
-        /// @dev bytes32 protocol identifier — e.g. keccak256("AAVE"). bytes32(0) means "any/all adapters"
+        /// @dev bytes32 protocol identifier, e.g. keccak256("AAVE"). bytes32(0) means "any/all adapters"
         bytes32 adapter;
         /// @dev USDC amount in absolute 6-decimal units for DEPOSIT/WITHDRAW, 0 for confirmation messages
         uint256 amount;
-        /// @dev Target protocol identifier for REBALANCE instructions — bytes32(0) if not applicable
+        /// @dev Target protocol identifier for REBALANCE instructions, bytes32(0) if not applicable
         bytes32 targetAdapter;
-        /// @dev Reserved for future use — always 0 in v1
+        /// @dev Reserved for future use: always 0 in v1
         uint256 targetAmount;
     }
 
     /// @notice The canonical message payload encoded in the CCIP `data` field for all Meridian messages
     /// @dev Encoded via abi.encode and decoded via abi.decode. The same struct is used for all
-    ///      message types — unused fields are zero-valued for a given message type.
+    ///      message types: unused fields are zero-valued for a given message type.
     struct CcipMessage {
         /// @dev Determines which handler function processes this message on the receiving side
         MessageType messageType;
-        /// @dev One entry per adapter operation — empty array for REPORT_BALANCE requests
+        /// @dev One entry per adapter operation, empty array for REPORT_BALANCE requests
         AdapterInstructions[] instructions;
         /// @dev Aggregated USDC balance of the spoke at message creation time.
         ///      Populated in spoke → hub messages (CONFIRM_*, REPORT_BALANCE).
@@ -97,7 +97,7 @@ library CCIPHelpers {
 
     /// @notice ABI-decodes bytes from a CCIP message payload back into a CcipMessage struct
     /// @dev Used by both hub and spoke inside _ccipReceive() after receiving a message.
-    ///      Reverts with a generic ABI decode error if the bytes are malformed —
+    ///      Reverts with a generic ABI decode error if the bytes are malformed,
     ///      only messages from registered hubs/spokes should ever reach this point.
     /// @param _encodedMessage Raw bytes from the CCIP message data field
     /// @return Decoded CcipMessage struct ready for routing and processing
